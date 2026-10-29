@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
   Calendar03Icon,
@@ -192,61 +192,71 @@ export function ResetTimeline({
             event.who.some((who) => who.provider === p),
           );
           return (
-            <Tooltip key={`${event.kind}/${event.at}`}>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label={`${name} at ${clock(event.at, hour12)}, ${count} ${count === 1 ? "account" : "accounts"}`}
-                    className="absolute top-[11px] flex h-4.5 -translate-1/2 items-center gap-1 rounded-full bg-background py-0.5 pr-1.5 pl-1 shadow-[0_0_0_1px_var(--color-border)] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    style={{ left: x(event.at) }}
-                  />
-                }
-              >
-                <span className="flex gap-0.5">
-                  {sources.map((provider) => (
-                    <ProviderIcon
-                      key={provider}
-                      provider={provider}
-                      className="size-3.5"
+            <Fragment key={`${event.kind}/${event.at}`}>
+              <div
+                aria-hidden="true"
+                className={cn(
+                  "absolute top-5 bottom-0 w-px -translate-x-1/2 bg-current opacity-60",
+                  color,
+                )}
+                style={{ left: x(event.at) }}
+              />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={`${name} at ${clock(event.at, hour12)}, ${count} ${count === 1 ? "account" : "accounts"}`}
+                      className="absolute top-[11px] flex h-4.5 -translate-1/2 items-center gap-1 rounded-full bg-background py-0.5 pr-1.5 pl-1 shadow-[0_0_0_1px_var(--color-border)] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      style={{ left: x(event.at) }}
                     />
-                  ))}
-                </span>
-                <Icon
-                  icon={icon}
-                  strokeWidth={2}
-                  className={cn("size-3", color)}
-                />
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                <div className="flex flex-col gap-1.5 py-1">
-                  <p className="flex items-center gap-2 font-medium">
-                    <Icon
-                      icon={icon}
-                      strokeWidth={2}
-                      className={cn("size-3.5", color)}
-                    />
-                    {name} at {clock(event.at, hour12)}
-                  </p>
-                  <ul className="flex flex-col gap-1">
-                    {event.who.map((who, index) => (
-                      <li key={index} className="flex justify-between gap-6">
-                        <span className="flex items-center gap-1.5">
-                          <ProviderIcon
-                            provider={who.provider}
-                            className="size-3.5"
-                          />
-                          <PrivateText>{who.account}</PrivateText>
-                        </span>
-                        <span className="text-muted-foreground">
-                          {who.detail}
-                        </span>
-                      </li>
+                  }
+                >
+                  <span className="flex gap-0.5">
+                    {sources.map((provider) => (
+                      <ProviderIcon
+                        key={provider}
+                        provider={provider}
+                        className="size-3.5"
+                      />
                     ))}
-                  </ul>
-                </div>
-              </TooltipContent>
-            </Tooltip>
+                  </span>
+                  <Icon
+                    icon={icon}
+                    strokeWidth={2}
+                    className={cn("size-3", color)}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <div className="flex flex-col gap-1.5 py-1">
+                    <p className="flex items-center gap-2 font-medium">
+                      <Icon
+                        icon={icon}
+                        strokeWidth={2}
+                        className={cn("size-3.5", color)}
+                      />
+                      {name} at {clock(event.at, hour12)}
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {event.who.map((who, index) => (
+                        <li key={index} className="flex justify-between gap-6">
+                          <span className="flex items-center gap-1.5">
+                            <ProviderIcon
+                              provider={who.provider}
+                              className="size-3.5"
+                            />
+                            <PrivateText>{who.account}</PrivateText>
+                          </span>
+                          <span className="text-muted-foreground">
+                            {who.detail}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </Fragment>
           );
         })}
       </div>
