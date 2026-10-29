@@ -16,8 +16,6 @@ pnpm dev
 
 Open <http://127.0.0.1:4310>. The first start writes your dashboard key to `data/admin-token`. Read that file locally and use the key to unlock the dashboard. The terminal prints the file's location, never its contents. An explicit `ADMIN_TOKEN` environment variable overrides this file.
 
-“Explore a sample pool” opens an example dashboard without credentials. Sample accounts never enter the database and cannot send requests.
-
 Frontend edits update through Vite. Restart `pnpm dev` after changing the server.
 
 The UI uses shadcn preset `b13HF9dX9O` with Base UI components. Theme, fonts, and icons are recorded in `components.json` and `src/styles.css`. The header theme control switches between light and dark and remembers the choice on each device.
@@ -50,7 +48,7 @@ Zen and Go have their own OpenAI and Anthropic routes. There is no automatic swi
 
 ## Configure devices
 
-Choose **Connect a device** in the account pool or **URL & setup** in Connections for complete URLs and copyable client configuration. Set `AI_FUNNEL_KEY` on the device to a shared key allowed on that connection.
+Choose **URL & setup** in Connections for complete URLs and copyable client configuration. Set `AI_FUNNEL_KEY` on the device to a shared key allowed on that connection.
 
 For a host `https://funnel.example.ts.net`, the route bases are:
 

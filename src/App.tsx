@@ -7,8 +7,6 @@ import {
   ArrowRight01Icon,
   ArrowUpRight01Icon,
   Cancel01Icon,
-  CheckmarkCircle02Icon,
-  Clock01Icon,
   Delete02Icon,
   Key01Icon,
   Layers01Icon,
@@ -18,23 +16,18 @@ import {
   PauseIcon,
   PlayIcon,
   Refresh01Icon,
-  Search01Icon,
   Sun01Icon,
 } from "@hugeicons/core-free-icons";
 import {
   providerNames,
   providers,
-  type Account,
-  type Provider,
   type PublicConnection,
   type PublicKey,
-  type Quota,
 } from "../server/types.ts";
-import { api, relative, timeUntil, type State } from "./api.ts";
-import { sampleState } from "./sample.ts";
+import { api, relative, type State } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
+import { UsageOverview } from "./usage.tsx";
 import { ConnectionDetails, ConnectionForm, KeyForm } from "./forms.tsx";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -55,13 +48,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Progress } from "@/components/ui/progress";
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
+import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
 import {
   Empty,
   EmptyContent,
@@ -71,25 +58,10 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from "@/components/ui/input-group";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Field,
   FieldDescription,
   FieldGroup,
   FieldLabel,
-  FieldSeparator,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -111,25 +83,18 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const tabs = [
-  { id: "pool", name: "Account pool", icon: Layers01Icon },
+  { id: "pool", name: "Usage", icon: Layers01Icon },
   { id: "connections", name: "Connections", icon: Link01Icon },
   { id: "keys", name: "API keys", icon: Key01Icon },
   { id: "activity", name: "Activity", icon: Activity01Icon },
 ] as const;
 type Tab = (typeof tabs)[number]["id"];
 const empty: State = { connections: [], keys: [], requests: [], publicUrl: "" };
-const usable = (status: string) =>
-  ["active", "ready", "connected", "ok"].includes(status.toLowerCase());
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [sample, setSample] = useState(false);
-  const [example] = useState(sampleState);
   const [state, setState] = useState<State>(empty);
   const [tab, setTab] = useState<Tab>("pool");
-  const [filter, setFilter] = useState<Provider | "all">("all");
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState("provider");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [modal, setModal] = useState<"connect" | "key" | null>(null);
@@ -153,29 +118,17 @@ export function App() {
       });
   }, []);
   useEffect(() => {
-    if (!authenticated || sample) return;
+    if (!authenticated) return;
     const load = () => {
       void reload().catch((e) => setError(e.message));
     };
     load();
     const timer = setInterval(load, 30000);
     return () => clearInterval(timer);
-  }, [authenticated, sample]);
-  const live = sample ? example : state;
-  const connections = live.connections;
-  const accounts = connections.flatMap((c) =>
-    c.accounts.map((a) => ({ ...a, connection: c })),
-  );
-  const origin = live.publicUrl || window.location.origin;
-  const sampleNotice = () =>
-    setError(
-      "You are viewing sample data. Exit the sample pool to connect your accounts.",
-    );
+  }, [authenticated]);
+  const connections = state.connections;
+  const origin = state.publicUrl || window.location.origin;
   async function action(id: string, task: () => Promise<unknown>) {
-    if (sample) {
-      sampleNotice();
-      return;
-    }
     setBusy(id);
     setError("");
     try {
@@ -215,7 +168,7 @@ export function App() {
         </div>
       </div>
     );
-  if (!authenticated && !sample)
+  if (!authenticated)
     return (
       <Login
         error={error}
@@ -223,94 +176,28 @@ export function App() {
           setError("");
           setAuthenticated(true);
         }}
-        onSample={() => {
-          setSample(true);
-          setError("");
-        }}
       />
     );
 
-  const filtered = connections
-    .filter((c) => filter === "all" || c.provider === filter)
-    .map((c) => ({
-      ...c,
-      accounts: c.accounts
-        .filter((a) =>
-          `${a.name} ${a.email} ${a.plan}`
-            .toLowerCase()
-            .includes(query.toLowerCase()),
-        )
-        .sort((a, b) =>
-          sort === "remaining"
-            ? (b.quotas[0]?.remaining ?? -1) - (a.quotas[0]?.remaining ?? -1)
-            : sort === "name"
-              ? a.name.localeCompare(b.name)
-              : 0,
-        ),
-    }))
-    .filter((c) => c.accounts.length || !query);
-  const resetSoon = accounts
-    .flatMap((a) =>
-      a.quotas
-        .filter((q) => q.resetsAt && Date.parse(q.resetsAt) > Date.now())
-        .map((q) => ({ ...q, account: a })),
-    )
-    .sort((a, b) => Date.parse(a.resetsAt!) - Date.parse(b.resetsAt!))
-    .slice(0, 3);
   const title = tabs.find((t) => t.id === tab)!.name;
-  const ready = accounts.filter(
-    (a) => usable(a.status) && a.connection.enabled && !a.connection.error,
-  ).length;
-  const providerCount = new Set(connections.map((c) => c.provider)).size;
-  const openConnect = () => (sample ? sampleNotice() : setModal("connect"));
-  const openKey = () => (sample ? sampleNotice() : setModal("key"));
+  const openConnect = () => setModal("connect");
+  const openKey = () => setModal("key");
 
   return (
     <div className="flex min-h-svh flex-col">
       <Navigation
         tab={tab}
-        sample={sample}
-        onTab={(value) => {
-          setTab(value);
-          setQuery("");
-        }}
+        onTab={setTab}
         onExit={() => {
-          if (sample) {
-            setSample(false);
-            setError("");
-            setTab("pool");
-          } else
-            void action("logout", async () => {
-              await api("/session", "DELETE");
-              setAuthenticated(false);
-              setState(empty);
-            });
+          void action("logout", async () => {
+            await api("/session", "DELETE");
+            setAuthenticated(false);
+            setState(empty);
+          });
         }}
       />
       <main className="min-w-0 flex-1">
         <div className="mx-auto flex w-full max-w-[1500px] flex-1 flex-col gap-7 px-4 py-6 sm:px-7 sm:py-8 lg:px-9">
-          {sample && (
-            <Alert className="pr-28">
-              <Icon icon={Layers01Icon} />
-              <AlertTitle>Example accounts and quotas.</AlertTitle>
-              <AlertDescription>
-                This sample is read-only. Your live accounts are separate.
-              </AlertDescription>
-              <AlertAction>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setSample(false);
-                    setTab("pool");
-                    setError("");
-                  }}
-                >
-                  Exit sample
-                </Button>
-              </AlertAction>
-            </Alert>
-          )}
           <header className="flex flex-wrap items-center justify-between gap-4">
             <h1 className="font-heading text-3xl font-bold tracking-tight">
               {title}
@@ -353,354 +240,15 @@ export function App() {
               </AlertAction>
             </Alert>
           )}
-          {tab === "pool" && (
-            <>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-5 border-y py-5 lg:grid-cols-4">
-                <Metric
-                  label="Total accounts"
-                  value={accounts.length}
-                  detail={`${providerCount} provider${providerCount === 1 ? "" : "s"}`}
-                />
-                <Metric
-                  label="Ready to use"
-                  value={ready}
-                  detail={
-                    accounts.length - ready
-                      ? `${accounts.length - ready} not ready`
-                      : accounts.length
-                        ? "All accounts available"
-                        : "Connect a provider"
-                  }
-                />
-                <Metric
-                  label="Connections"
-                  value={
-                    connections.filter((c) => c.enabled && !c.error).length
-                  }
-                  detail={`${connections.length} configured`}
-                />
-                <Metric
-                  label="Next reset"
-                  value={
-                    resetSoon.length
-                      ? timeUntil(resetSoon[0]!.resetsAt)
-                      : "Not reported"
-                  }
-                  detail={
-                    resetSoon[0]?.account.name || "Waiting for quota data"
-                  }
-                />
-              </div>
-              {!connections.length ? (
-                <EmptyPool
-                  onConnect={openConnect}
-                  onSample={() => {
-                    setSample(true);
-                    setError("");
-                  }}
-                />
-              ) : (
-                <div className="grid min-w-0 items-start gap-7 xl:grid-cols-[minmax(0,1fr)_260px]">
-                  <div className="flex min-w-0 flex-col gap-5">
-                    <div className="flex flex-col gap-3">
-                      <div className="overflow-x-auto pb-1">
-                        <ToggleGroup
-                          aria-label="Filter providers"
-                          value={[filter]}
-                          onValueChange={(v) => {
-                            if (v[0]) setFilter(v[0] as Provider | "all");
-                          }}
-                          size="sm"
-                          variant="outline"
-                          spacing={0}
-                        >
-                          <ToggleGroupItem value="all">
-                            All providers
-                          </ToggleGroupItem>
-                          {providers.map((p) => (
-                            <ToggleGroupItem key={p} value={p}>
-                              {p === "zen"
-                                ? "Zen"
-                                : p === "go"
-                                  ? "Go"
-                                  : providerNames[p]}
-                            </ToggleGroupItem>
-                          ))}
-                        </ToggleGroup>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <InputGroup className="w-full sm:max-w-xs">
-                          <InputGroupAddon>
-                            <Icon icon={Search01Icon} />
-                          </InputGroupAddon>
-                          <InputGroupInput
-                            aria-label="Search accounts"
-                            placeholder="Search accounts…"
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                          />
-                        </InputGroup>
-                        <Select
-                          value={sort}
-                          onValueChange={(value) => {
-                            if (value) setSort(value);
-                          }}
-                          items={{
-                            provider: "Provider order",
-                            remaining: "Most remaining",
-                            name: "Account name",
-                          }}
-                        >
-                          <SelectTrigger
-                            aria-label="Sort accounts"
-                            className="ml-auto"
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              <SelectItem value="provider">
-                                Provider order
-                              </SelectItem>
-                              <SelectItem value="remaining">
-                                Most remaining
-                              </SelectItem>
-                              <SelectItem value="name">Account name</SelectItem>
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    {filtered.length ? (
-                      filtered.map((c) => (
-                        <section
-                          key={c.id}
-                          aria-label={`${c.name} accounts`}
-                          className="overflow-hidden rounded-2xl border"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/30 px-4 py-3">
-                            <div className="flex min-w-0 items-center gap-3">
-                              <ProviderIcon provider={c.provider} small />
-                              <div className="min-w-0">
-                                <h2 className="truncate text-sm font-medium">
-                                  {c.name}
-                                </h2>
-                                <p className="text-xs text-muted-foreground">
-                                  {providerNames[c.provider]} ·{" "}
-                                  {c.accounts.length} account
-                                  {c.accounts.length === 1 ? "" : "s"}
-                                </p>
-                              </div>
-                              {!c.enabled && (
-                                <Badge variant="secondary">Paused</Badge>
-                              )}
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              aria-label="Connection details"
-                              onClick={() => setDetails(c)}
-                            >
-                              Connect a device
-                              <Icon
-                                icon={ArrowUpRight01Icon}
-                                data-icon="inline-end"
-                              />
-                            </Button>
-                          </div>
-                          {c.error && (
-                            <div className="p-4">
-                              <ErrorMessage>{c.error}</ErrorMessage>
-                              {c.provider === "codex" && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="mt-3"
-                                  onClick={() =>
-                                    sample ? sampleNotice() : setReconnect(c)
-                                  }
-                                >
-                                  Reconnect codex-lb
-                                </Button>
-                              )}
-                            </div>
-                          )}
-                          {c.accounts.length ? (
-                            <Table className="block lg:table">
-                              <TableHeader className="hidden lg:table-header-group">
-                                <TableRow>
-                                  <TableHead className="w-[32%] pl-4">
-                                    Account
-                                  </TableHead>
-                                  <TableHead className="w-[26%]">
-                                    Primary limit
-                                  </TableHead>
-                                  <TableHead className="w-[26%]">
-                                    Other limits
-                                  </TableHead>
-                                  <TableHead className="pr-4">Status</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody className="block lg:table-row-group">
-                                {c.accounts.map((a) => (
-                                  <TableRow
-                                    key={a.id}
-                                    data-account-row
-                                    className="grid grid-cols-2 gap-x-5 gap-y-4 p-4 lg:table-row lg:p-0"
-                                  >
-                                    <TableCell className="col-span-2 p-0 lg:p-4">
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="flex min-w-0 flex-col gap-1">
-                                          <span className="max-w-60 truncate font-medium">
-                                            {a.name}
-                                          </span>
-                                          {a.email && a.email !== a.name && (
-                                            <span className="max-w-60 truncate text-xs text-muted-foreground">
-                                              {a.email}
-                                            </span>
-                                          )}
-                                          <span className="text-xs text-muted-foreground">
-                                            {a.plan || "Plan not reported"}
-                                          </span>
-                                        </div>
-                                        <div className="lg:hidden">
-                                          <AccountStatus
-                                            account={a}
-                                            connection={c}
-                                          />
-                                        </div>
-                                      </div>
-                                      {a.quotaError && (
-                                        <p className="mt-2 max-w-60 text-xs whitespace-normal text-muted-foreground">
-                                          {a.quotaError}
-                                        </p>
-                                      )}
-                                    </TableCell>
-                                    <TableCell className="p-0 align-top lg:p-3 lg:align-middle">
-                                      <QuotaMeter
-                                        quota={a.quotas[0]}
-                                        muted={!c.enabled || !!c.error}
-                                      />
-                                    </TableCell>
-                                    <TableCell className="p-0 align-top lg:p-3 lg:align-middle">
-                                      <div className="flex flex-col gap-4">
-                                        {a.quotas.length > 1 ? (
-                                          a.quotas
-                                            .slice(1)
-                                            .map((q, i) => (
-                                              <QuotaMeter
-                                                key={`${q.label}-${i}`}
-                                                quota={q}
-                                                muted={!c.enabled || !!c.error}
-                                              />
-                                            ))
-                                        ) : (
-                                          <QuotaMeter />
-                                        )}
-                                      </div>
-                                    </TableCell>
-                                    <TableCell className="hidden pr-4 lg:table-cell">
-                                      <AccountStatus
-                                        account={a}
-                                        connection={c}
-                                      />
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          ) : (
-                            <Empty>
-                              <EmptyHeader>
-                                <EmptyTitle>No accounts reported</EmptyTitle>
-                                <EmptyDescription>
-                                  Refresh this connection to check for accounts.
-                                </EmptyDescription>
-                              </EmptyHeader>
-                            </Empty>
-                          )}
-                          <div className="flex items-center justify-between gap-3 border-t px-4 py-2.5 text-xs text-muted-foreground">
-                            <span>
-                              {c.syncedAt
-                                ? `Updated ${relative(c.syncedAt)}`
-                                : "Not synchronized"}
-                            </span>
-                            <span>{c.models.length} models</span>
-                          </div>
-                        </section>
-                      ))
-                    ) : (
-                      <Empty className="border">
-                        <EmptyHeader>
-                          <EmptyMedia variant="icon">
-                            <Icon icon={Search01Icon} />
-                          </EmptyMedia>
-                          <EmptyTitle>No matching accounts</EmptyTitle>
-                          <EmptyDescription>
-                            Try another name or provider.
-                          </EmptyDescription>
-                        </EmptyHeader>
-                        <EmptyContent>
-                          <Button
-                            variant="outline"
-                            onClick={() => {
-                              setFilter("all");
-                              setQuery("");
-                            }}
-                          >
-                            Clear filters
-                          </Button>
-                        </EmptyContent>
-                      </Empty>
-                    )}
-                  </div>
-                  <aside className="flex min-w-0 flex-col gap-5">
-                    <Card size="sm">
-                      <CardHeader>
-                        <CardTitle>Upcoming resets</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex flex-col gap-4">
-                          {resetSoon.length ? (
-                            resetSoon.map((q, i) => (
-                              <div
-                                key={`${q.account.id}-${q.label}-${i}`}
-                                className="flex items-start gap-3"
-                              >
-                                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted">
-                                  <Icon icon={Clock01Icon} size={16} />
-                                </span>
-                                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                                  <p className="truncate text-sm font-medium">
-                                    {q.account.name}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {q.label}
-                                  </p>
-                                  <p
-                                    className="text-sm tabular-nums"
-                                    title={new Date(
-                                      q.resetsAt!,
-                                    ).toLocaleString()}
-                                  >
-                                    {timeUntil(q.resetsAt)}
-                                  </p>
-                                </div>
-                              </div>
-                            ))
-                          ) : (
-                            <p className="text-sm text-muted-foreground">
-                              No scheduled resets reported.
-                            </p>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </aside>
-                </div>
-              )}
-            </>
-          )}
+          {tab === "pool" &&
+            (connections.length ? (
+              <UsageOverview
+                connections={connections}
+                onReconnect={setReconnect}
+              />
+            ) : (
+              <EmptyPool onConnect={openConnect} />
+            ))}
           {tab === "connections" &&
             (connections.length ? (
               <div className="grid min-w-0 gap-5 xl:grid-cols-2">
@@ -753,9 +301,7 @@ export function App() {
                               variant="outline"
                               size="sm"
                               className="mt-3"
-                              onClick={() =>
-                                sample ? sampleNotice() : setReconnect(c)
-                              }
+                              onClick={() => setReconnect(c)}
                             >
                               Reconnect codex-lb
                             </Button>
@@ -813,13 +359,11 @@ export function App() {
                           size="icon-sm"
                           aria-label={`Remove ${c.name}`}
                           onClick={() =>
-                            sample
-                              ? sampleNotice()
-                              : setRemove({
-                                  type: "connections",
-                                  id: c.id,
-                                  name: c.name,
-                                })
+                            setRemove({
+                              type: "connections",
+                              id: c.id,
+                              name: c.name,
+                            })
                           }
                         >
                           <Icon icon={Delete02Icon} />
@@ -830,15 +374,12 @@ export function App() {
                 ))}
               </div>
             ) : (
-              <EmptyPool
-                onConnect={openConnect}
-                onSample={() => setSample(true)}
-              />
+              <EmptyPool onConnect={openConnect} />
             ))}
           {tab === "keys" &&
-            (live.keys.length ? (
+            (state.keys.length ? (
               <div className="flex flex-col gap-5">
-                {live.keys.map((k) => (
+                {state.keys.map((k) => (
                   <KeyRow
                     key={k.id}
                     clientKey={k}
@@ -850,9 +391,7 @@ export function App() {
                       )
                     }
                     onRemove={() =>
-                      sample
-                        ? sampleNotice()
-                        : setRemove({ type: "keys", id: k.id, name: k.name })
+                      setRemove({ type: "keys", id: k.id, name: k.name })
                     }
                   />
                 ))}
@@ -879,7 +418,7 @@ export function App() {
             ))}
           {tab === "activity" && (
             <section className="min-w-0 overflow-hidden rounded-2xl border">
-              {live.requests.length ? (
+              {state.requests.length ? (
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -891,7 +430,7 @@ export function App() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {live.requests.map((r) => (
+                    {state.requests.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell>
                           <span title={new Date(r.at).toLocaleString()}>
@@ -908,7 +447,7 @@ export function App() {
                           </p>
                         </TableCell>
                         <TableCell>
-                          {live.keys.find((k) => k.id === r.keyId)?.name ||
+                          {state.keys.find((k) => k.id === r.keyId)?.name ||
                             "Removed key"}
                         </TableCell>
                         <TableCell>
@@ -1018,12 +557,10 @@ export function App() {
 
 function Navigation({
   tab,
-  sample,
   onTab,
   onExit,
 }: {
   tab: Tab;
-  sample: boolean;
   onTab: (value: Tab) => void;
   onExit: () => void;
 }) {
@@ -1057,8 +594,8 @@ function Navigation({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={sample ? "Exit sample" : "Lock dashboard"}
-            title={sample ? "Exit sample" : "Lock dashboard"}
+            aria-label="Lock dashboard"
+            title="Lock dashboard"
             onClick={onExit}
           >
             <Icon icon={Logout01Icon} />
@@ -1077,7 +614,12 @@ function ThemeSwitch() {
       : window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
   useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = "*,*::before,*::after{transition:none!important}";
+    document.head.append(style);
     document.documentElement.classList.toggle("dark", dark);
+    void document.body.offsetHeight;
+    requestAnimationFrame(() => requestAnimationFrame(() => style.remove()));
   }, [dark]);
   return (
     <Button
@@ -1094,101 +636,7 @@ function ThemeSwitch() {
   );
 }
 
-function Metric({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string | number;
-  detail: string;
-}) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="truncate font-heading text-2xl font-semibold tracking-tight tabular-nums">
-        {value}
-      </span>
-      <span className="truncate text-xs text-muted-foreground">{detail}</span>
-    </div>
-  );
-}
-
-function AccountStatus({
-  account,
-  connection,
-}: {
-  account: Account;
-  connection: PublicConnection;
-}) {
-  if (!connection.enabled) return <Badge variant="secondary">Paused</Badge>;
-  if (connection.error) return <Badge variant="destructive">Sync error</Badge>;
-  return (
-    <Badge
-      variant={
-        usable(account.status)
-          ? "outline"
-          : account.status.includes("limit")
-            ? "destructive"
-            : "secondary"
-      }
-    >
-      {usable(account.status) ? (
-        <>
-          <Icon icon={CheckmarkCircle02Icon} data-icon="inline-start" />
-          Ready
-        </>
-      ) : (
-        account.status
-          .replaceAll("_", " ")
-          .replace(/^./, (c) => c.toUpperCase())
-      )}
-    </Badge>
-  );
-}
-
-function QuotaMeter({ quota: q, muted }: { quota?: Quota; muted?: boolean }) {
-  if (!q)
-    return <span className="text-xs text-muted-foreground">Not reported</span>;
-  const remaining = q.remaining;
-  return (
-    <div className={cn("flex min-w-0 flex-col gap-2", muted && "opacity-50")}>
-      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <span className="text-xs text-muted-foreground">{q.label}</span>
-        <span className="text-xs font-medium tabular-nums">
-          {remaining === null
-            ? "Unavailable"
-            : `${Math.round(remaining)}% left`}
-        </span>
-      </div>
-      {remaining === null ? (
-        <div
-          className="h-3 rounded-full bg-muted"
-          aria-label={`${q.label} quota unavailable`}
-        />
-      ) : (
-        <Progress
-          value={Math.max(0, Math.min(100, remaining))}
-          aria-label={`${q.label} quota remaining`}
-        />
-      )}
-      <span
-        className="text-xs whitespace-normal text-muted-foreground"
-        title={q.resetsAt ? new Date(q.resetsAt).toLocaleString() : undefined}
-      >
-        {timeUntil(q.resetsAt)}
-      </span>
-    </div>
-  );
-}
-
-function EmptyPool({
-  onConnect,
-  onSample,
-}: {
-  onConnect: () => void;
-  onSample: () => void;
-}) {
+function EmptyPool({ onConnect }: { onConnect: () => void }) {
   return (
     <Empty className="min-h-96 border">
       <EmptyHeader>
@@ -1209,10 +657,6 @@ function EmptyPool({
         <Button onClick={onConnect}>
           <Icon icon={Add01Icon} data-icon="inline-start" />
           Connect your first provider
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onSample}>
-          Explore a sample pool
-          <Icon icon={ArrowRight01Icon} data-icon="inline-end" />
         </Button>
       </EmptyContent>
     </Empty>
@@ -1346,11 +790,9 @@ function KeyRow({
 
 function Login({
   onLogin,
-  onSample,
   error: initialError,
 }: {
   onLogin: () => void;
-  onSample: () => void;
   error: string;
 }) {
   const [error, setError] = useState(initialError);
@@ -1409,11 +851,6 @@ function Login({
                     <Icon icon={Key01Icon} data-icon="inline-start" />
                   )}
                   Unlock dashboard
-                </Button>
-                <FieldSeparator>Take a look first</FieldSeparator>
-                <Button type="button" variant="outline" onClick={onSample}>
-                  Explore a sample pool
-                  <Icon icon={ArrowRight01Icon} data-icon="inline-end" />
                 </Button>
               </FieldGroup>
             </form>

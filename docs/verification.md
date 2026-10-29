@@ -1,12 +1,12 @@
 # Verification
 
-Updated on 29 October 2026 for the UI rebuild using shadcn preset `b13HF9dX9O`. Provider adapters and account storage were not changed by this redesign.
+Updated on 29 October 2026 for the quota chart layout using shadcn preset `b13HF9dX9O`. Provider adapters and account storage were not changed by this redesign.
 
 ## Current checks
 
 - Production TypeScript/Vite build passes.
 - All 12 gateway tests pass. These cover authentication, origins, provider/model/account boundaries, expiration, concurrent daily caps, revocation, scoped Codex keys, Claude prefixes, SSE, upstream errors, cancellation, quota normalization, and encrypted storage.
-- All 3 Playwright flows pass against isolated fixture services. These cover the labeled sample pool, search, connection setup, scoped key creation, pausing, reload persistence, removal, mobile overflow, reduced motion, and dialog focus in both tab directions.
+- All 3 Playwright flows pass against isolated fixture services. These cover compact quota cards, account details on hover and focus, omission of unknown accounts, zero limits, provider rows, connection setup, scoped key creation, pausing, reload persistence, removal, mobile overflow, reduced motion, and dialog focus in both tab directions.
 - Chromium checks cover theme persistence, mobile top navigation, and a scrollable setup dialog at 390px. No page errors were observed in those checks. The responsive browser flow switches sections through the navbar on mobile.
 - A read-only UI check against a connected Codex pool displayed unavailable quotas, an additional 30-day window, and rate limiting. At 826px, account rows stack without page overflow. No console or page errors were observed. Installation-specific notes remain local and are excluded from Git.
 
@@ -14,9 +14,11 @@ The updated development server runs on port 4310. The inline Vite setup now uses
 
 ## UI review
 
-The interface uses the CLI-generated Luma components and zinc/sky theme, Hugeicons, Space Grotesk body text, and Nunito Sans headings. The previous custom stylesheet and Commissioner dependency were removed. `components.json` records the preset configuration.
+The interface uses the CLI-generated Luma components and zinc/sky theme, Hugeicons, Space Grotesk body text, and Nunito Sans headings. `components.json` records the preset configuration. Usage groups connections by provider and shows compact quota cards with horizontal stacked bars and remaining percentages. Unconnected providers have no row. Codex has 5-hour, weekly, and monthly cards. Account names and reset times appear on hover or keyboard focus. Accounts without a reported percentage are omitted from that window's tooltip; exhausted accounts remain visible.
 
-Reviewed light and dark account inventories at desktop width and the narrow screen layout at 390px. Account identities, quota percentages, reset times, unknown quotas, provider selection, navigation, and setup forms were inspected. Every reported quota window is displayed. Ready, paused, limited, and synchronization errors have explicit text. Numeric allowances are never invented for providers that do not report them.
+The feed currently supplies quota percentages rather than credit balances. Percentages are averages of reported account limits, as explained in the tooltip. Unknown values are excluded from those averages; zero remains an exhausted limit. A window with no reports has a striped unavailable state. Light, dark, and mobile screenshots were inspected after the change. Tooltips use the active popover colors rather than inverted colors. Theme changes suppress transitions so inherited button colors do not briefly disappear.
+
+Reviewed the compact card layout at desktop width and 390px. Numeric allowances are never invented for providers that do not report them. The earlier account table and summary strip were removed.
 
 The modal focus check waits for Base UI's scheduled focus movement. In connection setup, Shift+Tab wraps from Copy URL to Close, and Tab wraps back to Copy URL, without duplicating the library's focus management.
 

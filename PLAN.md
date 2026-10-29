@@ -61,7 +61,7 @@ Keep the dashboard focused on account data and actions. Omit the logo and produc
 
 ## Verification boundaries
 
-Live credentials are not available in the repository. Test adapters against representative upstream responses and record that live account compatibility still needs verification. Sample data is an explicitly labeled frontend-only preview; it never populates live connections or keys.
+Live credentials are not available in the repository. Test adapters against representative upstream responses and record that live account compatibility still needs verification. The dashboard requires authentication and displays only connected provider data. Test fixtures stay in tests.
 
 Initial transport is HTTP with SSE. WebSocket upgrade support must be added and tested before claiming native Codex WebSocket parity. Clients can use the HTTP transport in the meantime. Native paths are allowlisted; management paths cannot be reached with a client key.
 

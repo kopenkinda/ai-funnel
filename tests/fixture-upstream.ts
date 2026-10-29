@@ -24,6 +24,29 @@ createServer(async (req, res) => {
             },
             resetAtPrimary: new Date(Date.now() + 3600000).toISOString(),
           },
+          {
+            accountId: "exhausted-account",
+            displayName: "Exhausted account",
+            email: "exhausted@example.com",
+            planType: "plus",
+            status: "rate_limited",
+            usage: {
+              primaryRemainingPercent: 0,
+              secondaryRemainingPercent: null,
+            },
+            resetAtPrimary: new Date(Date.now() + 7200000).toISOString(),
+          },
+          {
+            accountId: "unavailable-account",
+            displayName: "Unavailable account",
+            email: "unavailable@example.com",
+            planType: "pro",
+            status: "active",
+            usage: {
+              primaryRemainingPercent: null,
+              secondaryRemainingPercent: null,
+            },
+          },
         ],
       }),
     );

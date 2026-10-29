@@ -30,12 +30,13 @@ export function timeUntil(value: string | null) {
   if (!value) return "Reset unavailable";
   const diff = new Date(value).getTime() - Date.now();
   if (diff <= 0) return "Awaiting refresh";
-  const hours = Math.floor(diff / 3600000);
-  const minutes = Math.max(1, Math.ceil((diff % 3600000) / 60000));
+  const totalMinutes = Math.ceil(diff / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
   return hours >= 24
     ? `Resets in ${Math.floor(hours / 24)}d ${hours % 24}h`
     : hours
-      ? `Resets in ${hours}h ${minutes}m`
+      ? `Resets in ${hours}h${minutes ? ` ${minutes}m` : ""}`
       : `Resets in ${minutes}m`;
 }
 export function relative(value: string | null) {

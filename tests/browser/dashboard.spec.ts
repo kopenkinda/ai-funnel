@@ -1,32 +1,102 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
-test("sample workspace is explicit, searchable, and responsive", async ({
+test.beforeEach(async ({ request }) => {
+  await request.post("/api/session", {
+    data: { token: "browser-test-dashboard-key" },
+  });
+  const state = await (await request.get("/api/state")).json();
+  for (const c of state.connections)
+    await request.delete(`/api/connections/${c.id}`);
+  for (const k of state.keys) await request.delete(`/api/keys/${k.id}`);
+});
+
+async function openConnectedPool(page: Page) {
+  await page.request.post("/api/session", {
+    data: { token: "browser-test-dashboard-key" },
+  });
+  const response = await page.request.post("/api/connections", {
+    data: {
+      provider: "codex",
+      name: "Browser test pool",
+      url: "http://127.0.0.1:4320",
+      password: "test-password",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  await page.goto("/");
+}
+
+test("quota charts distinguish exhausted and unknown limits and remain responsive", async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/");
-  await page.getByRole("button", { name: "Explore a sample pool" }).click();
+  await openConnectedPool(page);
   await expect(
-    page.getByText("Example accounts and quotas.", { exact: false }),
+    page.getByRole("heading", { name: "Codex usage", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Daily driver", { exact: true }).first(),
+    page.getByRole("heading", { name: "Claude usage", exact: true }),
+  ).toHaveCount(0);
+  const shortWindow = page.getByRole("region", {
+    name: "5-hour usage",
+    exact: true,
+  });
+  const weeklyWindow = page.getByRole("region", {
+    name: "Weekly usage",
+    exact: true,
+  });
+  await expect(shortWindow.getByText("36.5%", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Monthly usage", exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Search accounts").fill("Reserve");
-  await expect(page.locator("[data-account-row]")).toHaveCount(1);
-  await page.getByLabel("Search accounts").clear();
-  await page
-    .getByRole("button", { name: "Connection details" })
-    .first()
-    .click();
-  await expect(page.getByRole("dialog")).toContainText(
-    "supports_websockets = false",
-  );
+  await expect(
+    page.getByText("Browser test account", { exact: true }),
+  ).not.toBeVisible();
+  await shortWindow.hover();
+  const tooltip = page.getByRole("tooltip");
+  await expect(
+    tooltip.getByText("Browser test account", { exact: true }),
+  ).toBeVisible();
+  await expect(tooltip.getByText("0%", { exact: true })).toBeVisible();
+  await expect(
+    tooltip.getByText("Unavailable account", { exact: true }),
+  ).toHaveCount(0);
+  await expect(tooltip).toContainText("63.5% used");
+  await page.screenshot({
+    path: "/tmp/ai-funnel-tooltip-light.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await weeklyWindow.hover();
+  await expect(tooltip).toHaveCount(0);
+  await expect(
+    weeklyWindow.getByText("Unavailable", { exact: true }),
+  ).toBeVisible();
+  await shortWindow.focus();
+  await expect(
+    tooltip.getByText("Browser test account", { exact: true }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.setViewportSize({ width: 1440, height: 1080 });
+  await expect(tooltip).toHaveCount(0);
+  await shortWindow.blur();
+  await page.mouse.move(1, 1);
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: "/tmp/ai-funnel-desktop.png", fullPage: true });
+  await page.getByRole("button", { name: "Switch to dark theme" }).click();
+  await page.screenshot({
+    path: "/tmp/ai-funnel-desktop-dark.png",
+    fullPage: true,
+  });
+  await shortWindow.hover();
+  await expect(tooltip).toBeVisible();
+  await page.screenshot({
+    path: "/tmp/ai-funnel-tooltip-dark.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.mouse.move(1, 1);
+  await expect(tooltip).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "/tmp/ai-funnel-mobile.png", fullPage: true });
   expect(
@@ -41,26 +111,14 @@ test("sample workspace is explicit, searchable, and responsive", async ({
   await expect(
     page.getByRole("heading", { name: "Connections", exact: true }),
   ).toBeVisible();
-  await navigation
-    .getByRole("button", { name: "Account pool", exact: true })
-    .click();
-  await expect(
-    page.getByText("Daily driver", { exact: true }).first(),
-  ).toBeVisible();
+  await navigation.getByRole("button", { name: "Usage", exact: true }).click();
+  await expect(shortWindow).toBeVisible();
   expect(errors).toEqual([]);
 });
 
 test("connect a pool, create a scoped key, pause it, and remove the connection", async ({
   page,
-  request,
 }) => {
-  await request.post("/api/session", {
-    data: { token: "browser-test-dashboard-key" },
-  });
-  const state = await (await request.get("/api/state")).json();
-  for (const c of state.connections)
-    await request.delete(`/api/connections/${c.id}`);
-  for (const k of state.keys) await request.delete(`/api/keys/${k.id}`);
   await page.goto("/");
   await page.getByLabel("Dashboard key").fill("browser-test-dashboard-key");
   await page.getByRole("button", { name: "Unlock dashboard" }).click();
@@ -75,9 +133,10 @@ test("connect a pool, create a scoped key, pause it, and remove the connection",
     .getByRole("button", { name: "Connect provider", exact: true })
     .click();
   await expect(
-    page.getByText("Browser test account", { exact: true }).first(),
+    page
+      .getByRole("region", { name: "5-hour usage", exact: true })
+      .getByText("36.5%", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("73", { exact: false }).first()).toBeVisible();
   await page.getByRole("button", { name: "API keys", exact: true }).click();
   await page.getByRole("button", { name: "Add shared key" }).click();
   await page.getByLabel("Key name").fill("Browser device");
@@ -122,12 +181,9 @@ test("reduced motion disables movement and dialogs retain keyboard focus", async
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Explore a sample pool" }).click();
-  await page
-    .getByRole("button", { name: "Connection details" })
-    .first()
-    .click();
+  await openConnectedPool(page);
+  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page.getByRole("button", { name: "URL & setup", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(
