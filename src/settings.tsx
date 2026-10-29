@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   providerNames,
   providers,
@@ -11,19 +11,11 @@ import {
   type Settings,
 } from "./types";
 import { api } from "./api";
-import { Dialog, CopyButton, ErrorMessage } from "./ui";
+import { Dialog, CopyButton, ErrorMessage, ProviderIcon } from "./ui";
 import { usePreferences } from "./preferences";
 import { PrivateText } from "./privacy";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Field,
-  FieldLabel,
-  FieldDescription,
-  FieldGroup,
-  FieldLegend,
-  FieldSet,
-} from "@/components/ui/field";
+import { FieldLabel, FieldDescription } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -33,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 const resetStrategies: RoutingStrategy[] = [
@@ -85,13 +77,52 @@ function RoutingSettings({
     }
   }
   const account = accounts.find((a) => a.id === value.accountId);
+  const number = (
+    field: "power" | "topK",
+    label: string,
+    description: string,
+    text: string,
+    setText: (text: string) => void,
+    limits: { min: string; max: string; step: string },
+  ) => (
+    <Row
+      id={`${provider}-routing-${field}`}
+      label={label}
+      description={description}
+    >
+      <Input
+        id={`${provider}-routing-${field}`}
+        type="number"
+        {...limits}
+        className="w-20 text-right tabular-nums"
+        value={text}
+        disabled={busy}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() =>
+          Number(text) !== value[field] &&
+          void save({ ...value, [field]: Number(text) })
+        }
+      />
+    </Row>
+  );
   return (
-    <FieldSet className="gap-3">
-      <FieldLegend variant="label" className="mb-0">
-        {name} routing
-      </FieldLegend>
-      {error && <ErrorMessage>{error}</ErrorMessage>}
-      <div className="flex flex-wrap gap-2">
+    <Section
+      title={
+        <>
+          <ProviderIcon provider={provider} small />
+          {name} routing
+        </>
+      }
+    >
+      {error && (
+        <div className="p-4">
+          <ErrorMessage>{error}</ErrorMessage>
+        </div>
+      )}
+      <Row
+        label="Strategy"
+        description={`How requests choose a ${name} account.`}
+      >
         <Select
           value={value.strategy}
           disabled={busy}
@@ -105,10 +136,10 @@ function RoutingSettings({
             })
           }
         >
-          <SelectTrigger aria-label={`${name} routing strategy`}>
+          <SelectTrigger size="sm" aria-label={`${name} routing strategy`}>
             <SelectValue>{routingStrategies[value.strategy]}</SelectValue>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent alignItemWithTrigger={false} align="end">
             <SelectGroup>
               {Object.entries(routingStrategies).map(([key, label]) => (
                 <SelectItem key={key} value={key}>
@@ -118,7 +149,9 @@ function RoutingSettings({
             </SelectGroup>
           </SelectContent>
         </Select>
-        {value.strategy === "single_account" && (
+      </Row>
+      {value.strategy === "single_account" && (
+        <Row label="Account" description="Every request goes to this account.">
           <Select
             value={value.accountId ?? null}
             disabled={busy}
@@ -127,11 +160,12 @@ function RoutingSettings({
             }
           >
             <SelectTrigger
+              size="sm"
               aria-label={`${name} routing account`}
               aria-invalid={
                 !!value.accountId && (!account || account.status === "paused")
               }
-              className="max-w-64"
+              className="max-w-56"
             >
               <SelectValue>
                 {account ? (
@@ -145,7 +179,11 @@ function RoutingSettings({
                 )}
               </SelectValue>
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent
+              alignItemWithTrigger={false}
+              align="end"
+              className="w-max max-w-[min(24rem,var(--available-width))] min-w-(--anchor-width)"
+            >
               <SelectGroup>
                 {accounts.map((a) => (
                   <SelectItem
@@ -161,53 +199,35 @@ function RoutingSettings({
               </SelectGroup>
             </SelectContent>
           </Select>
-        )}
-      </div>
+        </Row>
+      )}
       {value.strategy === "relative_availability" && (
-        <div className="grid grid-cols-2 gap-3">
-          <Field>
-            <FieldLabel htmlFor={`${provider}-routing-power`}>
-              Weight exponent
-            </FieldLabel>
-            <Input
-              id={`${provider}-routing-power`}
-              type="number"
-              min="0.1"
-              max="10"
-              step="0.1"
-              value={power}
-              disabled={busy}
-              onChange={(e) => setPower(e.target.value)}
-              onBlur={() =>
-                Number(power) !== value.power &&
-                void save({ ...value, power: Number(power) })
-              }
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${provider}-routing-top-k`}>
-              Top accounts
-            </FieldLabel>
-            <Input
-              id={`${provider}-routing-top-k`}
-              type="number"
-              min="1"
-              max="50"
-              step="1"
-              value={topK}
-              disabled={busy}
-              onChange={(e) => setTopK(e.target.value)}
-              onBlur={() =>
-                Number(topK) !== value.topK &&
-                void save({ ...value, topK: Number(topK) })
-              }
-            />
-          </Field>
-        </div>
+        <>
+          {number(
+            "power",
+            "Weight exponent",
+            "Higher values favor the accounts with the most quota left.",
+            power,
+            setPower,
+            { min: "0.1", max: "10", step: "0.1" },
+          )}
+          {number(
+            "topK",
+            "Top accounts",
+            "How many of the best accounts share the traffic.",
+            topK,
+            setTopK,
+            { min: "1", max: "50", step: "1" },
+          )}
+        </>
       )}
       {value.strategy !== "single_account" && (
-        <Field orientation="horizontal">
-          <Checkbox
+        <Row
+          id={`${provider}-sticky`}
+          label="Keep sessions on one account"
+          description="Requests from the same session stay on the account they started on."
+        >
+          <Switch
             id={`${provider}-sticky`}
             checked={value.stickySessions}
             disabled={busy}
@@ -215,45 +235,47 @@ function RoutingSettings({
               void save({ ...value, stickySessions })
             }
           />
-          <FieldLabel htmlFor={`${provider}-sticky`}>
-            Keep sessions on one account
-          </FieldLabel>
-        </Field>
+        </Row>
       )}
       {resetStrategies.includes(value.strategy) && (
-        <Field orientation="horizontal">
-          <Checkbox
-            id={`${provider}-earlier-reset`}
-            checked={value.preferEarlierReset}
-            disabled={busy}
-            onCheckedChange={(preferEarlierReset) =>
-              void save({ ...value, preferEarlierReset })
-            }
-          />
-          <FieldLabel htmlFor={`${provider}-earlier-reset`}>
-            Prefer earlier reset
-          </FieldLabel>
-          <ToggleGroup
-            aria-label={`${name} reset window`}
-            variant="outline"
-            size="sm"
-            spacing={0}
-            value={[value.resetWindow]}
-            disabled={busy || !value.preferEarlierReset}
-            onValueChange={([resetWindow]) =>
-              resetWindow &&
-              void save({
-                ...value,
-                resetWindow: resetWindow as Routing["resetWindow"],
-              })
-            }
-          >
-            <ToggleGroupItem value="primary">5h</ToggleGroupItem>
-            <ToggleGroupItem value="secondary">Weekly</ToggleGroupItem>
-          </ToggleGroup>
-        </Field>
+        <Row
+          id={`${provider}-earlier-reset`}
+          label="Prefer earlier reset"
+          description="Uses accounts whose quota resets sooner first."
+        >
+          <div className="flex items-center gap-3">
+            {value.preferEarlierReset && (
+              <ToggleGroup
+                aria-label={`${name} reset window`}
+                variant="outline"
+                size="sm"
+                spacing={0}
+                value={[value.resetWindow]}
+                disabled={busy}
+                onValueChange={([resetWindow]) =>
+                  resetWindow &&
+                  void save({
+                    ...value,
+                    resetWindow: resetWindow as Routing["resetWindow"],
+                  })
+                }
+              >
+                <ToggleGroupItem value="primary">5h</ToggleGroupItem>
+                <ToggleGroupItem value="secondary">Weekly</ToggleGroupItem>
+              </ToggleGroup>
+            )}
+            <Switch
+              id={`${provider}-earlier-reset`}
+              checked={value.preferEarlierReset}
+              disabled={busy}
+              onCheckedChange={(preferEarlierReset) =>
+                void save({ ...value, preferEarlierReset })
+              }
+            />
+          </div>
+        </Row>
       )}
-    </FieldSet>
+    </Section>
   );
 }
 
@@ -295,11 +317,14 @@ export function DashboardSettings({
   return (
     <Dialog title="Settings" onClose={onClose}>
       {error && <ErrorMessage>{error}</ErrorMessage>}
-      <FieldGroup>
-        <Field>
-          <FieldLabel>Use expiring banked resets</FieldLabel>
-          <div className="flex items-start gap-3">
-            <Checkbox
+      <div className="flex flex-col gap-5">
+        <Section title="Resets">
+          <Row
+            id="auto-resets"
+            label="Redeem expiring banked resets"
+            description="Uses a banked reset 5 minutes before it expires, so it isn't lost."
+          >
+            <Switch
               id="auto-resets"
               checked={auto}
               disabled={busy}
@@ -315,14 +340,8 @@ export function DashboardSettings({
                 });
               }}
             />
-            <div className="flex flex-col gap-1">
-              <FieldLabel htmlFor="auto-resets">
-                Automatically redeem 5 minutes before expiry
-              </FieldLabel>
-            </div>
-          </div>
-        </Field>
-        <Separator />
+          </Row>
+        </Section>
         {settings?.routing &&
           providers.map((provider) => (
             <RoutingSettings
@@ -335,33 +354,34 @@ export function DashboardSettings({
               onSaved={onSaved}
             />
           ))}
-        <Separator />
-        <Field>
-          <FieldLabel>Time format</FieldLabel>
-          <div className="flex items-start gap-3">
-            <Checkbox
-              id="hour12"
-              checked={hour12}
-              onCheckedChange={setHour12}
-            />
-            <FieldLabel htmlFor="hour12">Use 12-hour time</FieldLabel>
+        <Section title="Display">
+          <Row
+            id="hour12"
+            label="Use 12-hour clock"
+            description={`Shows times as ${example(true)} instead of ${example(false)}. Saved in this browser.`}
+          >
+            <Switch id="hour12" checked={hour12} onCheckedChange={setHour12} />
+          </Row>
+        </Section>
+        <Section title="T3 Code usage hub">
+          <div className="flex flex-col gap-2 p-4">
+            <FieldLabel htmlFor="hub-url">Hub URL</FieldLabel>
+            <div className="flex gap-2">
+              <Input
+                id="hub-url"
+                aria-label="Hub URL"
+                readOnly
+                value={origin}
+              />
+              <CopyButton value={origin} />
+            </div>
           </div>
-        </Field>
-        <Separator />
-        <Field>
-          <FieldLabel>T3 Code usage hub</FieldLabel>
-
-          <div className="flex gap-2">
-            <Input aria-label="Hub URL" readOnly value={origin} />
-            <CopyButton value={origin} />
-          </div>
-        </Field>
-        <Field>
-          <FieldLabel>Management key</FieldLabel>
           {key ? (
-            <>
+            <div className="flex flex-col gap-2 p-4">
+              <FieldLabel htmlFor="hub-key">Management key</FieldLabel>
               <div className="flex gap-2">
                 <Input
+                  id="hub-key"
                   aria-label="Hub management key"
                   readOnly
                   type="password"
@@ -369,11 +389,22 @@ export function DashboardSettings({
                 />
                 <CopyButton value={key} />
               </div>
-            </>
+              <FieldDescription>
+                Copy the key now. It isn't shown again.
+              </FieldDescription>
+            </div>
           ) : (
-            <>
+            <Row
+              label="Management key"
+              description={
+                settings?.hasHubKey
+                  ? "Replacing the key disconnects existing usage hubs until you update them."
+                  : "Lets a T3 Code usage hub read usage from this dashboard."
+              }
+            >
               <Button
                 variant="outline"
+                size="sm"
                 disabled={busy}
                 onClick={() =>
                   void run(async () => {
@@ -386,16 +417,62 @@ export function DashboardSettings({
               >
                 {settings?.hasHubKey ? "Replace hub key" : "Generate hub key"}
               </Button>
-              {settings?.hasHubKey && (
-                <FieldDescription>
-                  Replacing the key disconnects existing usage hubs until you
-                  update them.
-                </FieldDescription>
-              )}
-            </>
+            </Row>
           )}
-        </Field>
-      </FieldGroup>
+        </Section>
+      </div>
     </Dialog>
+  );
+}
+
+const example = (hour12: boolean) =>
+  new Date(2026, 0, 1, 14, 30).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hourCycle: hour12 ? "h12" : "h23",
+  });
+
+function Section({
+  title,
+  children,
+}: {
+  title: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="flex items-center gap-2 px-1 text-sm font-medium">
+        {title}
+      </h3>
+      <div className="flex flex-col divide-y rounded-2xl border">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function Row({
+  id,
+  label,
+  description,
+  children,
+}: {
+  id?: string;
+  label: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 p-4">
+      <div className="flex min-w-0 flex-1 basis-56 flex-col gap-1">
+        {id ? (
+          <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        ) : (
+          <span className="text-sm font-medium">{label}</span>
+        )}
+        <FieldDescription>{description}</FieldDescription>
+      </div>
+      {children}
+    </div>
   );
 }

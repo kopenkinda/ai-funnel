@@ -1140,8 +1140,8 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
     "Invalid Date",
   );
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const auto = page.getByRole("checkbox", {
-    name: "Automatically redeem 5 minutes before expiry",
+  const auto = page.getByRole("switch", {
+    name: "Redeem expiring banked resets",
   });
   await expect(auto).not.toBeChecked();
   await auto.check();
@@ -1351,7 +1351,7 @@ test("usage summary filters by provider and maps upcoming resets", async ({
   const monthly = timeline.getByRole("button", { name: /^Monthly reset/ });
   await expect(monthly).toHaveAccessibleName(/ at \d{1,2}:\d{2} [AP]M,/);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const hour12 = page.getByRole("checkbox", { name: "Use 12-hour time" });
+  const hour12 = page.getByRole("switch", { name: "Use 12-hour clock" });
   await expect(hour12).toBeChecked();
   await hour12.uncheck();
   await page.keyboard.press("Escape");
@@ -1377,13 +1377,13 @@ test("routing settings persist per provider and validate input", async ({
   await expect(
     page.getByRole("combobox", { name: "Claude routing strategy" }),
   ).toHaveText("Capacity weighted");
-  const sticky = page.getByRole("checkbox", {
+  const sticky = page.getByRole("switch", {
     name: "Keep sessions on one account",
   });
   await expect(sticky).toHaveCount(2);
   await expect(sticky.first()).toBeChecked();
   await expect(
-    page.getByRole("checkbox", { name: "Prefer earlier reset" }).first(),
+    page.getByRole("switch", { name: "Prefer earlier reset" }).first(),
   ).toBeChecked();
   await expect(
     page
@@ -1395,7 +1395,7 @@ test("routing settings persist per provider and validate input", async ({
   await page.getByRole("option", { name: "Relative availability" }).click();
   await expect(strategy).toHaveText("Relative availability");
   await expect(
-    page.getByRole("checkbox", { name: "Prefer earlier reset" }),
+    page.getByRole("switch", { name: "Prefer earlier reset" }),
   ).toHaveCount(1);
   const power = page.getByLabel("Weight exponent");
   await expect(power).toHaveValue("2");
