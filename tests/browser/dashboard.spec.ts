@@ -1432,3 +1432,39 @@ test("routing settings persist per provider and validate input", async ({
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(strategy).toHaveText("Capacity weighted");
 });
+
+test("long filter menus scroll their list, not the blurred popup", async ({
+  page,
+}) => {
+  await page.route("**/api/requests?*", (route) =>
+    route.fulfill({
+      json: {
+        items: [],
+        total: 0,
+        page: 1,
+        pages: 1,
+        models: Array.from({ length: 60 }, (_, i) => `model-${i}`),
+      },
+    }),
+  );
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto("/activity");
+  await page
+    .getByLabel("Dashboard key", { exact: true })
+    .fill("browser-test-dashboard-key");
+  await page.getByRole("button", { name: "Unlock dashboard" }).click();
+  await expect(page.getByText("No matching requests")).toBeVisible();
+  await page.getByRole("combobox", { name: "Model" }).click();
+  const list = page.getByRole("listbox");
+  await expect(list.getByRole("option", { name: "model-59" })).toBeAttached();
+  await list.hover();
+  await page.mouse.wheel(0, 800);
+  await expect
+    .poll(() => list.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
+  expect(
+    await page
+      .locator('[data-slot="select-content"]')
+      .evaluate((el) => el.scrollTop),
+  ).toBe(0);
+});
