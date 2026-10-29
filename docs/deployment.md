@@ -1,4 +1,24 @@
-# Deployment with Coolify
+# Deployment
+
+## Storage
+
+`DATA_DIR` holds three files that belong together:
+
+- `state.enc`: AES-256-GCM encrypted credentials, account state, key policies, settings, quota snapshots, sessions and request metadata.
+- `master.key`: decrypts `state.enc`. Losing it makes the state unreadable.
+- `admin-token`: the generated dashboard key, unless `ADMIN_TOKEN` is set.
+
+The SDK uses the encrypted store for login and token refresh, so no persistent plaintext credential files are created. Temporary OAuth callback files live in the private `oauth-sessions` directory until the SDK consumes them. All files use owner-only permissions. A lock file allows one process per data directory.
+
+Back up the whole directory while the service is stopped. Dashboard sessions use HTTP-only cookies, and dashboard mutations reject foreign origins. Runtime data, environment files and local notes are excluded from Git and Docker build contexts.
+
+## Docker
+
+The image runs a single Go process. `compose.yaml` publishes `127.0.0.1:4310` and keeps state in the `funnel-data` named volume mounted at `/app/data`. Do not bind `4310:4310`, which listens on every host interface, and do not run two containers against the same volume.
+
+Set `PUBLIC_URL` to the canonical HTTPS origin. To keep a second dashboard origin, such as a private Tailscale hostname next to a public domain, list it in `DASHBOARD_ORIGINS`.
+
+## Coolify
 
 Use a GitHub App application in the target Coolify project and environment:
 

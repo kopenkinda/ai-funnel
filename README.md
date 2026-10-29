@@ -1,12 +1,38 @@
 # ai-funnel
 
-One personal service for Codex and Claude subscriptions. The Go backend embeds [CLIProxyAPI v8.0.47](https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.47) and serves the React dashboard. Codex and Claude accounts log in directly here. You do not need separate codex-lb or CLIProxyAPI deployments.
+A self-hosted proxy that pools your Codex and Claude subscription accounts behind your own API keys. It routes Codex and Claude Code requests across your accounts, tracks quota windows, and logs usage per key.
 
-## Run
+It runs as one Go service. The backend embeds [CLIProxyAPI v8.0.47](https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.47) for provider login, token refresh and request handling, and serves a React dashboard from the same port. Accounts sign in directly here, so there is no separate CLIProxyAPI or codex-lb deployment to run.
 
-For private hosting, see [the Coolify and Tailscale deployment setup](docs/deployment.md).
+![Usage dashboard with token and estimated cost graphs, Claude and Codex quota windows, and per-account remaining allowance](docs/screenshots/usage.png)
 
-Build with Go 1.27.3+, Node 24+, and pnpm:
+## Features
+
+- **Codex and Claude accounts.** Sign in with OAuth, paste an auth or setup token, or import `~/.codex/auth.json` or Claude Code's `.credentials.json`. Other CLIProxyAPI providers are listed as unsupported.
+- **Quota tracking.** Each account shows its 5-hour, weekly and model-specific windows with reset times, refreshed every two minutes. Banked Codex and Claude resets can be redeemed manually or automatically before they expire.
+- **Eight routing strategies** per provider, with sticky sessions and a preference for accounts whose window resets soonest. The default is capacity weighted. See [routing](docs/routing.md).
+- **Scoped API keys.** Limit a key to providers, accounts and models, set a daily request cap or expiry, and edit any of it later without changing the key value. Codex keys can be restricted to subscription allowance only. Archived keys keep their history and can be restored.
+- **Usage and cost.** Token graphs and estimated API-equivalent cost from public OpenAI and Claude price tables, per day, per provider and per key.
+- **Activity log.** Searchable request history with account, key, model, transport, latency, time to first token, output speed, tokens and cost. Prompts and responses are not stored.
+- **Native transports.** Codex Responses over HTTP, SSE and WebSockets, Claude Messages over HTTP and SSE, with gzip and zstd compression.
+- **Encrypted state.** Credentials, keys and settings live in one AES-256-GCM encrypted file.
+
+## Quick start
+
+### Docker
+
+```sh
+git clone https://github.com/kopenkinda/ai-funnel.git
+cd ai-funnel
+docker compose up --build -d
+docker compose exec ai-funnel cat /app/data/admin-token
+```
+
+The compose file publishes the dashboard on `http://127.0.0.1:4310` only and keeps state in the `funnel-data` volume. The last command prints the dashboard key generated on first start. Set `PUBLIC_URL` in the environment when you serve it from a real hostname.
+
+### From source
+
+You need Go 1.27.3+, Node 24+ and pnpm 10. Node is only a build tool; production runs `bin/ai-funnel` with the built `dist` folder.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -15,118 +41,106 @@ pnpm build
 pnpm start
 ```
 
-Open <http://127.0.0.1:4310>. Read the dashboard key locally from `DATA_DIR/admin-token`. The default directory is `data/embedded`. An explicit `ADMIN_TOKEN` overrides that file. The service reads `.env` on startup and prints the key's location, never its value.
-
-`pnpm dev` builds the frontend and runs the Go backend. Run `pnpm build:ui` after frontend edits, then refresh the page. Restart after Go changes. Production needs only `bin/ai-funnel`, `dist`, and its data directory. Node is a build tool, not a production backend.
-
-## Add accounts
-
-Choose **Connect provider**, select Codex or Claude, then choose an account source:
-
-- **OAuth** opens the provider's sign-in. If it ends at an unreachable localhost page, paste that complete callback URL into the dashboard.
-- **Auth token** accepts an OAuth access token or Claude setup token. Codex normally reads the account ID from the token; you can enter it when needed. A token without refresh credentials works until it expires, then needs replacing.
-- **JSON file** imports Codex's `~/.codex/auth.json`, a flat CLIProxyAPI credential file, or Claude Code's `.credentials.json`. Refresh tokens and expiry are retained. Subscription credentials are supported; API-key-only Codex files are rejected.
-
-Imports go directly into the encrypted store and become available without restarting. Re-importing a recognized account retains its ID, key assignments, and pause state. The app does not modify your source file or save a plaintext copy. Token validity is checked by provider requests, not by merely parsing the file.
-
-Use **Connections → Add account** for additional subscription accounts. **URL & setup** lists all accounts, lets you pause or resume each one, and supplies the provider URL and client configuration. **Refresh** reads quotas from each provider; background reads run every two minutes. Unavailable quotas remain unknown, and a failed read retains the previous value with its timestamp. The dashboard refreshes cached metadata every 30 seconds.
-
-Start these accounts from scratch. There is no codex-lb migration or account import from the former companion backend. Existing services and their files are left untouched. The Go backend does not read the old SQLite database.
-
-## API key access
-
-Use the edit action under **API keys** to change a key's name, providers, accounts, models, request cap or expiration. The key value and usage history stay the same. Changes apply to subsequent requests and WebSocket turns.
-
-**Codex → Subscription only** uses accounts while their live subscription windows have allowance remaining, including accounts with purchased credits. Funnel checks before each execution, retry, and WebSocket turn, skips exhausted or unverifiable accounts, and returns 429 when none are eligible. Other keys keep their existing access. Requests already in flight and delayed provider usage reporting can spend some purchased credits near the limit. This is a subscription cutoff, not a hard credit spending cap.
-
-**Archive** revokes a key's access and keeps its settings and lifetime usage. Find it under **Archived** to restore it. Restored keys stay paused until enabled.
-
-Account rows show plan multipliers and exceptional statuses. **Use reset** redeems the displayed banked credit, with its expiry shown underneath. Manual use works independently of automatic resets for both Codex and Claude.
-
-Model access uses the same provider catalog as native model discovery. Keep **All models** enabled for unrestricted model access, including future models. Disable it to select models from the searchable picker. Selected models appear above the picker and can be removed individually.
-
-## Account routing
-
-**Settings → Codex routing** and **Claude routing** choose how requests are spread across the accounts a key may use. Changes are saved encrypted and apply to the next selection without a restart. The default is **Capacity weighted** with sticky sessions and earlier-reset preference on the weekly window.
-
-| Strategy              | Selection                                                                                                                     |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Capacity weighted     | Random draw weighted by remaining weekly percentage times plan capacity.                                                      |
-| Relative availability | Weight is remaining capacity per second until the weekly reset, raised to the exponent (default 2), among the top 5 accounts. |
-| Usage weighted        | Lowest weekly usage, then lowest 5h usage, then the account used least recently.                                              |
-| Round robin           | Rotates through accounts in ID order.                                                                                         |
-| Fill first            | Highest 5h usage, then highest weekly usage, so one account drains before the next.                                           |
-| Sequential drain      | Smallest plan capacity first, then account ID.                                                                                |
-| Reset drain           | Nearest weekly reset by day, then most remaining 5h and weekly allowance.                                                     |
-| Single account        | Only the selected account. Requests fail if it is paused, removed, cooling down, or not assigned to the key.                  |
-
-Plan capacity follows the account badges: Codex Plus and Business 1, Pro 100 5, Pro 200 10, Pro 500 20; Claude Pro and Team 1, Max 5x 5, Max 20x 20. Free and unknown plans count as 1. Purchased credits and banked resets do not add capacity. **Prefer earlier reset** limits Capacity weighted, Usage weighted and Fill first to accounts whose selected window resets soonest, compared by whole day for the weekly window and exact seconds for 5h.
-
-Routing reads the last quota refresh. Windows shorter than a day count as 5h, longer ones (weekly or monthly) as weekly; a plan with only a long window uses it for both. Model-specific windows, such as Codex Spark or Claude Opus weekly limits, apply only to matching models, and the most used matching window counts. Code review and extra-usage windows are ignored. A window whose reset time has passed counts as unused until the next refresh. Missing quota data counts as unused, so a failed or pending lookup never blocks requests. Accounts with an exhausted window are used only when every permitted account is exhausted, leaving purchased credits and extra usage as spillover.
-
-Sticky sessions use the client's session ID, or matching conversation history when no ID is present, to keep a conversation on its account for cache locality. Bindings are isolated per API key. A binding is reused only while the account is still permitted for the key and model, enabled, not cooling down, and not exhausted while another account has allowance. Otherwise the request and its retries move to another permitted account and the session rebinds. **Subscription only** still checks each selected Codex account live and fails closed. Routing does not move a Codex WebSocket turn off the account its socket is pinned to; per-turn key, account availability, single-account routing and subscription checks still apply. A switch to a different single account requires reconnecting the socket.
-
-## Usage and request logs
-
-Usage graphs show token totals and estimated API-equivalent cost for Today, 7d, 30d, 90d, the past year or All time. Both graphs share the selected period and split uncached input, cache reads, cache writes, output and reasoning on hover. Dates use UTC, with hourly points for Today and monthly points for longer histories. The backend uses the SDK's non-overlapping token accounting. Daily aggregates persist independently of the 10,000 retained request records; recent hourly aggregates retain two days. Existing request metadata supplies hourly history on the first upgrade.
-
-Prices are versioned with each request, using the [OpenAI](https://developers.openai.com/api/docs/pricing) and [Claude](https://platform.claude.com/docs/en/about-claude/pricing) public API tables verified on 29 October 2026. Long-context and supported service-tier rates apply. Unknown models or unclassified usage remain unpriced. Cache-write retention is not available in the SDK usage record, so those estimates span the published short- and long-retention prices. These estimates exclude subscription fees and separate tool charges.
-
-Activity supports search, provider/account/key/model/status/transport filters, pagination and request details. Records include account, model, client and upstream transport, latency, TTFT, output speed, tokens and cost. Prompts, response text, raw upstream errors and bearer credentials are not persisted.
-
-**Settings → Use expiring banked resets** enables Codex and Claude redemption during a credit's final five minutes. It defaults off and persists on the server. The scheduler checks every 15 seconds while the service runs, refreshes credit status before redemption, and retries temporary failures or `nothing_to_reset` every 30 seconds until expiry. Claude grants must be usable; grants without an expiry are displayed but never automatically redeemed. Codex uses T3 Code's deterministic request ID. Claude persists one request ID per redemption, reuses it for unconfirmed requests after restarts, and waits for a confirmed count decrease before using another reset from the same grant. Successful redemptions clear the account's local cooldown. Counts and expiry details are available from the banked-reset badge.
-
-## T3 Code usage hub
-
-In **Settings**, generate a hub key. Add a CLIProxyAPI hub in T3 Code with the service's root URL and that management key. Replacing the key invalidates the previous one. The hub exposes `/v0/management/auth-files` and a scoped `/v0/management/api-call` for official Codex/Claude usage endpoints and Codex reset-credit operations. It does not expose raw SDK management, credentials or arbitrary outbound requests.
-
-## Device keys and provider URLs
-
-Create a shared key and select its providers, accounts, and models. You can also register an existing device key value and assign its access here. No restrictions are inherited from another service. Key values are shown once and stored as SHA-256 hashes.
-
-Each provider keeps its own request and response shape:
-
-| Provider         | Base URL                                   |
-| ---------------- | ------------------------------------------ |
-| Codex            | `/providers/codex/codex/backend-api/codex` |
-| Codex compatible | `/providers/codex/codex/v1`                |
-| Claude Code      | `/providers/claude/claude`                 |
-
-Use `Authorization: Bearer <shared-key>` or `x-api-key: <shared-key>`. Copy the complete URLs from **URL & setup**. Codex supports Responses and compact; Claude supports Messages and count_tokens. HTTP and SSE are supported. Codex supports end-to-end WebSockets with `supports_websockets = true`. Each WebSocket turn rechecks key, model and daily-limit policies. Changing account assignments requires a reconnect.
-
-Provider requests accept gzip and zstd, with a 16 MiB limit on both wire and decoded bodies. HTTP responses negotiate gzip or zstd through `Accept-Encoding`, including SSE with per-event flushing. Codex WebSockets negotiate permessage-deflate separately. Large upstream Codex HTTP requests use zstd; large Claude Messages requests use gzip. Claude Code currently compresses requests only for Anthropic's hostname, so a custom base URL sends plain JSON to the proxy and the proxy compresses the provider hop. Client configuration files are not modified.
-
-Use Claude Code for Claude subscription traffic. Set `ANTHROPIC_BASE_URL` to the Claude Code base URL above and `ANTHROPIC_AUTH_TOKEN` to your shared client key. Live greeting checks were run with the actual Claude Code CLI through this proxy. Current model IDs worked; the SDK catalog also lists legacy IDs that fail or are remapped by the client. See [the verification results](docs/verification.md).
-
-The app enforces provider, account, model, expiry, pause, and daily request policies before dispatch. The SDK selector filters every retry to the permitted provider and accounts. It cannot borrow credentials from a different provider or a larger account pool. Daily caps reserve authenticated provider requests atomically, including model discovery and failed attempts, and reset at midnight UTC. Raw SDK inference and management endpoints are blocked. SDK management calls run inside the process.
-
-## Storage and deployment
-
-`DATA_DIR/state.enc` contains AES-256-GCM encrypted credentials, account state, key policies, quota snapshots, sessions, and request metadata. `master.key` decrypts it. The SDK uses this encrypted store for login and token refresh; persistent plaintext credential files are not created. Temporary OAuth callback files are kept in the private `oauth-sessions` directory and consumed by the SDK. Files use owner-only permissions. One process can hold a data directory at a time.
-
-Back up the whole data directory while the service is stopped. Losing the master key makes the stored state unreadable. Activity retains 10,000 request metadata records with 50 per page. Lifetime cost and token totals per API key persist independently of those logs. Upgrading backfills the retained request history; older evicted logs cannot be attributed to keys retroactively. Prompts and response bodies are not stored in activity. Dashboard sessions use HTTP-only cookies, and mutations reject foreign origins.
-
-Set `PUBLIC_URL` to the canonical HTTPS origin. For private access, keep the service bound to loopback and forward your Tailscale Serve hostname to port 4310. Public HTTPS through Coolify can run alongside it; set `DASHBOARD_ORIGINS` to the private origin to retain both dashboards. See [deployment configuration](docs/deployment.md). A container also runs a single Go process:
+In another terminal, read the generated dashboard key:
 
 ```sh
-docker compose up --build -d
+cat data/embedded/admin-token
 ```
 
-The compose file publishes loopback port 4310 and keeps state in a named volume. Do not run two services against the same data directory. Runtime data, environment files, and local installation notes are excluded from Git and Docker build contexts.
+| Variable            | Default         | Purpose                                                            |
+| ------------------- | --------------- | ------------------------------------------------------------------ |
+| `HOST`              | `127.0.0.1`     | Listen address.                                                    |
+| `PORT`              | `4310`          | Listen port.                                                       |
+| `DATA_DIR`          | `data/embedded` | Encrypted state, master key and dashboard key.                     |
+| `PUBLIC_URL`        | unset           | Canonical HTTPS origin, used for setup snippets and origin checks. |
+| `DASHBOARD_ORIGINS` | unset           | Extra comma-separated origins allowed to use the dashboard.        |
+| `ADMIN_TOKEN`       | unset           | Fixed dashboard key. Without it, one is generated in `DATA_DIR`.   |
 
-## Checks
+The service reads `.env` on startup and logs where the dashboard key is stored, never the key itself. Only one process can use a data directory at a time.
+
+### First login and accounts
+
+1. Open the dashboard and enter the dashboard key.
+2. Go to **Connections** and choose **Add account** on the Codex or Claude card.
+3. Pick an account source: **OAuth** opens the provider sign-in, **Auth token** takes a pasted token, **JSON file** imports a credential file. If OAuth ends on an unreachable localhost page, paste that full callback URL into the dialog.
+4. Go to **API keys**, choose **Add key**, select the providers it may use, and copy the key. Key values are shown once.
+
+Repeat step 2 for every account you want in the pool. Imports apply immediately without a restart. [Accounts and keys](docs/accounts-and-keys.md) covers each source and every key option.
+
+## Connect a client
+
+**URL & setup** on each connection shows the exact base URL and a ready-to-copy snippet for your host. Keep the client key in an environment variable on each device:
 
 ```sh
+export AI_FUNNEL_KEY='sk-af-...'
+```
+
+### Codex
+
+Add to `~/.codex/config.toml`:
+
+```toml
+model_provider = "ai-funnel"
+model = "<model id from the dashboard>"
+
+[model_providers.ai-funnel]
+name = "ai-funnel"
+base_url = "https://funnel.example.com/providers/codex/codex/backend-api/codex"
+wire_api = "responses"
+env_key = "AI_FUNNEL_KEY"
+requires_openai_auth = false
+supports_websockets = true
+```
+
+OpenAI-compatible clients can use `https://funnel.example.com/providers/codex/codex/v1` over HTTP with WebSockets disabled.
+
+### Claude Code
+
+```sh
+export ANTHROPIC_BASE_URL='https://funnel.example.com/providers/claude/claude'
+export ANTHROPIC_AUTH_TOKEN="$AI_FUNNEL_KEY"
+claude
+```
+
+Both `Authorization: Bearer` and `x-api-key` headers are accepted. Endpoints, transports and policy checks are listed in [client API](docs/client-api.md).
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/screenshots/api-keys.png"><img src="docs/screenshots/api-keys.png" alt="API keys page with the key editor and lifetime cost and token totals per key"></a></td>
+    <td width="50%"><a href="docs/screenshots/activity.png"><img src="docs/screenshots/activity.png" alt="Activity log listing requests with account, API key, model, tokens, speed and estimated cost"></a></td>
+  </tr>
+  <tr>
+    <td><a href="docs/screenshots/codex-setup.png"><img src="docs/screenshots/codex-setup.png" alt="Codex URL and setup dialog with account pause controls, base URL and config.toml snippet"></a></td>
+    <td><a href="docs/screenshots/settings-routing.png"><img src="docs/screenshots/settings-routing.png" alt="Settings dialog with Codex and Claude routing strategies, banked reset and usage hub options"></a></td>
+  </tr>
+</table>
+
+Screenshots use anonymized data. Account emails are blurred by the dashboard's default privacy mode.
+
+## Documentation
+
+- [Accounts and keys](docs/accounts-and-keys.md): account sources, quotas, banked resets, key scopes, subscription-only access, archive, T3 Code usage hub.
+- [Routing](docs/routing.md): the eight strategies, plan capacity, quota windows and sticky sessions.
+- [Usage and activity](docs/usage-and-activity.md): graphs, cost estimates, pricing sources and retention.
+- [Client API](docs/client-api.md): base URLs, transports, compression and request policy.
+- [Deployment](docs/deployment.md): storage, backups, Coolify, Tailscale Serve and public HTTPS.
+- [Verification](docs/verification.md): what has been tested, including live client runs.
+
+## Development
+
+```sh
+pnpm dev          # builds the UI, runs the Go backend against DATA_DIR
 pnpm lint
 pnpm format:check
-pnpm test
-pnpm build
+pnpm test         # Go tests and Oxlint rule tests
 pnpm exec playwright install chromium
-pnpm test:ui
+pnpm test:ui      # browser tests against an isolated backend
 ```
 
-`pnpm format` runs Prettier and gofmt. `pnpm lint:fix` applies safe Oxlint fixes. The local `project/no-em-dash` rule rejects literal em dashes in JS/TS/TSX, including comments and UI text. Imported skills and provider logo assets keep their original formatting.
+`pnpm dev` uses the same `DATA_DIR` as `pnpm start`, so point it at a scratch directory if your normal one holds real accounts. After frontend edits, run `pnpm build:ui` and reload. Restart after Go changes. `pnpm format` runs Prettier and gofmt, and `pnpm lint:fix` applies safe Oxlint fixes. A local Oxlint rule rejects literal em dashes in JS, TS and TSX.
 
-Backend tests run the embedded SDK with controlled executors and isolated state. They check authentication, account selection, native Responses and Messages, streaming, quotas, concurrent limits, and encrypted persistence. They do not prove live provider login or token refresh. Those require signing in to real accounts. See [docs/verification.md](docs/verification.md).
+Backend tests run the embedded SDK with controlled executors and isolated state. They do not sign in to real providers.
 
-The UI retains shadcn preset `b13HF9dX9O`. Provider SVG sources and licenses are listed in [public/providers/SOURCES.md](public/providers/SOURCES.md). CLIProxyAPI's license is in [LICENSES/CLIProxyAPI.txt](LICENSES/CLIProxyAPI.txt).
+The UI uses shadcn preset `b13HF9dX9O`. Provider logo sources and licenses are in [public/providers/SOURCES.md](public/providers/SOURCES.md). CLIProxyAPI's license is in [LICENSES/CLIProxyAPI.txt](LICENSES/CLIProxyAPI.txt).
