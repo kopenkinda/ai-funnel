@@ -1,13 +1,14 @@
 package funnel
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
+	"github.com/klauspost/compress/zstd"
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
@@ -54,33 +56,6 @@ func TestOAuthStorageSurvivesRestart(t *testing.T) {
 	data, e := os.ReadFile(filepath.Join(dir, "state.enc"))
 	if e != nil || strings.Contains(string(data), "initial-refresh-token") {
 		t.Fatal("credentials were not encrypted", e)
-	}
-}
-
-func TestOpenCodeForwarding(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/inference/go/anthropic/v1/messages" || r.Header.Get("Authorization") != "Bearer upstream-fixture" || r.Header.Get("Cookie") != "" || r.Header.Get("X-Api-Key") != "" || r.Header.Get("X-Opencode-Session") != "conversation-fixture" {
-			t.Error("provider route, credentials, or session were changed incorrectly")
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Set-Cookie", "upstream-cookie=private")
-		_, _ = io.WriteString(w, "event: message_stop\ndata: {}\n\n")
-	}))
-	defer upstream.Close()
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	c.Request = httptest.NewRequest("POST", "/providers/go/connection/anthropic/v1/messages", nil).WithContext(ctx)
-	c.Request.Header.Set("Authorization", "Bearer device-fixture")
-	c.Request.Header.Set("X-Api-Key", "device-fixture")
-	c.Request.Header.Set("Cookie", "funnel_session=private")
-	c.Request.Header.Set("X-Opencode-Session", "conversation-fixture")
-	a := &App{}
-	a.openCode(c, Connection{URL: upstream.URL + "/inference/go", APIKey: "upstream-fixture"}, Grant{}, "/anthropic/v1/messages", []byte(`{"model":"example"}`))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "message_stop") || w.Header().Get("Set-Cookie") != "" {
-		t.Fatal("native stream or response isolation failed")
 	}
 }
 
@@ -195,6 +170,18 @@ func TestEmbeddedService(t *testing.T) {
 	}
 	admin := store.Admin
 	t.Run("dashboard auth and raw routes", func(t *testing.T) {
+		for _, provider := range []string{"zen", "go"} {
+			status, _ := request("POST", "/api/connections", admin, fmt.Sprintf(`{"provider":%q,"name":"Removed provider"}`, provider))
+			if status != 400 {
+				t.Fatalf("removed provider %s accepted: %d", provider, status)
+			}
+			for _, route := range []struct{ method, path string }{{"GET", "/v1/models"}, {"POST", "/anthropic/v1/messages"}} {
+				status, _ = request(route.method, "/providers/"+provider+"/fixture"+route.path, admin, `{"model":"fixture"}`)
+				if status != 404 {
+					t.Fatalf("removed provider route %s%s returned %d", provider, route.path, status)
+				}
+			}
+		}
 		for _, p := range []string{"/v8/management/credentials", "/v1/models", "/v0/management/config"} {
 			status, _ := request("GET", p, admin, "")
 			if status != 404 {
@@ -217,6 +204,33 @@ func TestEmbeddedService(t *testing.T) {
 			t.Fatal(response.StatusCode)
 		}
 	})
+	t.Run("T3 usage hub is scoped and has no credential export", func(t *testing.T) {
+		status, b := request("POST", "/api/hub-token", admin, "")
+		if status != 201 {
+			t.Fatal(status)
+		}
+		var key struct {
+			Token string `json:"token"`
+		}
+		_ = json.Unmarshal(b, &key)
+		status, b = request("GET", "/v0/management/auth-files", key.Token, "")
+		if status != 200 || !strings.Contains(string(b), "auth_index") || strings.Contains(string(b), "fixture-private-access-token") || strings.Contains(string(b), "access_token") {
+			t.Fatalf("unsafe hub inventory %d", status)
+		}
+		status, _ = request("POST", "/v0/management/api-call", key.Token, `{"auth_index":"account-a","method":"GET","url":"http://127.0.0.1/private"}`)
+		if status != 403 {
+			t.Fatal("arbitrary upstream accepted", status)
+		}
+		status, b = request("POST", "/v0/management/api-call", key.Token, `{"auth_index":"account-a","method":"GET","url":"https://chatgpt.com/backend-api/wham/usage"}`)
+		if status != 200 || !strings.Contains(string(b), "status_code") {
+			t.Fatal("T3 contract mismatch", status)
+		}
+		status, _ = request("GET", "/api/state", key.Token, "")
+		if status != 401 {
+			t.Fatal("hub key became dashboard admin")
+		}
+	})
+
 	status, b := request("POST", "/api/connections", admin, `{"provider":"codex","name":"Codex"}`)
 	if status != 201 {
 		t.Fatalf("pool %d %s", status, b)
@@ -256,6 +270,62 @@ func TestEmbeddedService(t *testing.T) {
 	key := makeKey("null")
 	path := "/providers/codex/codex/v1/responses"
 	payload := fmt.Sprintf(`{"model":%q,"input":"test"}`, model)
+	t.Run("WebSocket per-turn caps and fresh grants", func(t *testing.T) {
+		clientKey := makeKey("1")
+		headers := http.Header{"Authorization": []string{"Bearer " + clientKey}}
+		dialer := *websocket.DefaultDialer
+		dialer.EnableCompression = true
+		ws, response, err := dialer.Dial(strings.Replace(root, "http://", "ws://", 1)+"/providers/codex/codex/backend-api/codex/responses", headers)
+		if err != nil {
+			if response != nil {
+				t.Fatal(response.StatusCode, err)
+			}
+			t.Fatal(err)
+		}
+		defer ws.Close()
+		if !strings.Contains(response.Header.Get("Sec-WebSocket-Extensions"), "permessage-deflate") {
+			t.Fatal("WebSocket compression was not negotiated")
+		}
+		read := func(want string) {
+			t.Helper()
+			_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+			for {
+				_, b, err := ws.ReadMessage()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(b), want) {
+					return
+				}
+			}
+		}
+		send := func() {
+			t.Helper()
+			if err := ws.WriteJSON(map[string]any{"type": "response.create", "model": model, "input": []any{}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		send()
+		read("response.completed")
+		send()
+		read("Daily request limit")
+		_ = store.change(func(d *diskState) error {
+			for id, k := range d.Keys {
+				if k.Hash == digest(clientKey) {
+					k.DailyLimit = nil
+					k.Grants[0].AccountIDs = []string{"account-a"}
+					d.Keys[id] = k
+				}
+			}
+			return nil
+		})
+		send()
+		read("Account access changed")
+		capture.mu.Lock()
+		capture.ids = nil
+		capture.mu.Unlock()
+	})
+
 	t.Run("native execution and scoped selection", func(t *testing.T) {
 		status, b := request("POST", path, key, payload)
 		if status != 200 || !strings.Contains(string(b), "resp_fixture") {
@@ -280,6 +350,77 @@ func TestEmbeddedService(t *testing.T) {
 		status, _ = request("GET", "/api/state", key, "")
 		if status != 401 {
 			t.Fatal(status)
+		}
+	})
+	t.Run("compressed request and streaming response preserve access checks", func(t *testing.T) {
+		for _, encoding := range []string{"gzip", "zstd"} {
+			for _, forbidden := range []bool{false, true} {
+				input := strings.TrimSuffix(payload, "}") + `,"stream":true}`
+				if forbidden {
+					input = `{"model":"forbidden","input":"test","stream":true}`
+				}
+				var wire bytes.Buffer
+				if encoding == "gzip" {
+					encoder := gzip.NewWriter(&wire)
+					_, _ = io.WriteString(encoder, input)
+					_ = encoder.Close()
+				} else {
+					encoder, _ := zstd.NewWriter(&wire)
+					_, _ = io.WriteString(encoder, input)
+					_ = encoder.Close()
+				}
+				// A real client can send headers before its upload is complete.
+				// Committing a response status early makes the SDK close that body.
+				reader, writer := io.Pipe()
+				go func() {
+					_, _ = writer.Write(wire.Bytes()[:8])
+					time.Sleep(20 * time.Millisecond)
+					_, _ = writer.Write(wire.Bytes()[8:])
+					_ = writer.Close()
+				}()
+				r, _ := http.NewRequest("POST", root+path, reader)
+				r.Header.Set("Authorization", "Bearer "+key)
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("Content-Encoding", encoding)
+				r.Header.Set("Accept-Encoding", encoding)
+				response, err := client.Do(r)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := 200
+				if forbidden {
+					want = 403
+				}
+				if response.StatusCode != want {
+					t.Fatalf("%s status %d, want %d", encoding, response.StatusCode, want)
+				}
+				if !forbidden {
+					if response.Header.Get("Content-Encoding") != encoding {
+						t.Fatal("response compression was bypassed")
+					}
+					var decoded io.Reader
+					if encoding == "gzip" {
+						decoder, err := gzip.NewReader(response.Body)
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer decoder.Close()
+						decoded = decoder
+					} else {
+						decoder, err := zstd.NewReader(response.Body)
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer decoder.Close()
+						decoded = decoder
+					}
+					body, err := io.ReadAll(decoded)
+					if err != nil || !strings.Contains(string(body), "response.completed") {
+						t.Fatal("compressed stream did not complete", err)
+					}
+				}
+				_ = response.Body.Close()
+			}
 		}
 	})
 	t.Run("parallel requests cannot exceed daily cap", func(t *testing.T) {

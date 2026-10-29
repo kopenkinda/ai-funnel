@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/openai"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/httptransport"
 )
 
 type Quota struct {
@@ -33,8 +35,11 @@ type Account struct {
 	ResetCredits *ResetCredits `json:"resetCredits,omitempty"`
 }
 type ResetCredits struct {
-	Available  int  `json:"available"`
-	Applicable *int `json:"applicable"`
+	Items      []ResetCredit `json:"items,omitempty"`
+	CheckedAt  *time.Time    `json:"checkedAt,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	Available  int           `json:"available"`
+	Applicable *int          `json:"applicable"`
 }
 type Snapshot struct {
 	Quotas       []Quota       `json:"quotas"`
@@ -80,6 +85,19 @@ func (a *App) publicConnection(conn Connection) gin.H {
 			t := snap.At
 			synced = &t
 		}
+		if snap.ResetCredits != nil && snap.ResetCredits.CheckedAt != nil {
+			for i := range snap.ResetCredits.Items {
+				credit := &snap.ResetCredits.Items[i]
+				attempt, ok := d.ResetAttempts[auth.ID+"|"+credit.ID]
+				if ok {
+					credit.Attempt = &attempt
+					if terminalReset(attempt.Result) {
+						credit.Status = attempt.Result
+					}
+				}
+			}
+			snap.ResetCredits.Available = len(activeCredits(snap.ResetCredits.Items, now()))
+		}
 		accounts = append(accounts, Account{ID: auth.ID, Name: name, Email: email, Plan: plan, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits})
 		// This registry lookup is local to the SDK, never an upstream request.
 		if a.engine != nil {
@@ -98,40 +116,9 @@ func (a *App) publicConnection(conn Connection) gin.H {
 			}
 		}
 	}
-	if conn.Provider == "zen" || conn.Provider == "go" {
-		models = append(models, conn.Models...)
-		accounts = []Account{{ID: conn.ID, Name: conn.Name, Plan: strings.ToUpper(conn.Provider[:1]) + conn.Provider[1:], Status: "connected", Quotas: []Quota{}, QuotaError: "View balance and billing in OpenCode Console."}}
-	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
 	sort.Strings(models)
-	return gin.H{"id": conn.ID, "provider": conn.Provider, "name": conn.Name, "url": conn.URL, "enabled": conn.Enabled, "createdAt": conn.CreatedAt, "accounts": accounts, "models": models, "syncedAt": synced, "error": nil, "hasApiKey": true, "hasManagementAccess": true}
-}
-func openCodeModels(ctx context.Context, c Connection) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	r, _ := http.NewRequestWithContext(ctx, "GET", c.URL+"/v1/models", nil)
-	r.Header.Set("Authorization", "Bearer "+c.APIKey)
-	response, e := http.DefaultClient.Do(r)
-	if e != nil {
-		return nil, e
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return nil, fmt.Errorf("models unavailable")
-	}
-	var data struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if e = json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&data); e != nil {
-		return nil, e
-	}
-	out := []string{}
-	for _, m := range data.Data {
-		out = append(out, m.ID)
-	}
-	return out, nil
+	return gin.H{"id": conn.ID, "provider": conn.Provider, "name": conn.Name, "enabled": conn.Enabled, "createdAt": conn.CreatedAt, "accounts": accounts, "models": models, "syncedAt": synced, "error": nil, "hasApiKey": true, "hasManagementAccess": true}
 }
 func parseQuota(label string, window map[string]any, percentField, resetField string, used bool) Quota {
 	q := Quota{Label: label}
@@ -190,12 +177,18 @@ func (a *App) refresh(ctx context.Context, conn Connection) {
 			snap.ResetCredits = old.ResetCredits
 			snap.At = old.At
 		}
+		if conn.Provider == "codex" && !auth.Disabled {
+			snap.ResetCredits = a.fetchCredits(ctx, auth, snap.ResetCredits)
+		}
 		_ = a.store.change(func(d *diskState) error { d.Snapshots[auth.ID] = snap; return nil })
 	}
 }
 func allowedPath(p, path, method string) bool {
+	if p != "codex" && p != "claude" {
+		return false
+	}
 	if method == "GET" {
-		return path == "/v1/models" || (p == "codex" && path == "/backend-api/codex/models") || ((p == "zen" || p == "go") && (path == "/openai/v1/models" || path == "/anthropic/v1/models"))
+		return path == "/v1/models" || (p == "codex" && path == "/backend-api/codex/models")
 	}
 	if method != "POST" {
 		return false
@@ -206,7 +199,7 @@ func allowedPath(p, path, method string) bool {
 	if p == "claude" {
 		return path == "/v1/messages" || path == "/v1/messages/count_tokens"
 	}
-	return contains([]string{"/openai/v1/responses", "/openai/v1/chat/completions", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens"}, path)
+	return false
 }
 func (a *App) provider(c *gin.Context) {
 	parts := strings.SplitN(strings.TrimPrefix(c.Request.URL.Path, "/providers/"), "/", 3)
@@ -215,31 +208,26 @@ func (a *App) provider(c *gin.Context) {
 		return
 	}
 	provider, id, path := parts[0], parts[1], "/"+parts[2]
-	if !allowedPath(provider, path, c.Request.Method) {
+	isWS := websocket.IsWebSocketUpgrade(c.Request) && provider == "codex" && c.Request.Method == "GET" && (path == "/v1/responses" || path == "/backend-api/codex/responses")
+	if !isWS && !allowedPath(provider, path, c.Request.Method) {
 		fail(c, 404, "Provider route not available.")
 		return
 	}
 	value := bearer(c.Request)
-	d := a.store.read()
-	keyID := ""
-	for _, k := range d.Keys {
-		if value != "" && k.Hash == digest(value) {
-			keyID = k.ID
-			break
-		}
-	}
-	if keyID == "" {
-		fail(c, 401, "Supply a valid client key.")
-		return
-	}
 	var body []byte
 	model := ""
 	if c.Request.Method == "POST" {
 		var e error
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20)
-		body, e = io.ReadAll(c.Request.Body)
+		var status int
+		body, status, e = readProviderBody(c)
 		if e != nil {
-			fail(c, 413, "Request body too large.")
+			message := "Invalid compressed request body."
+			if status == 413 {
+				message = "Request body too large."
+			} else if status == 415 {
+				message = "Supported request encodings: gzip, zstd."
+			}
+			fail(c, status, message)
 			return
 		}
 		var b struct {
@@ -251,100 +239,33 @@ func (a *App) provider(c *gin.Context) {
 		}
 		model = b.Model
 	}
-	authProviders := map[string]string{}
-	for _, auth := range a.core.List() {
-		authProviders[auth.ID] = auth.Provider
-	}
-	var conn Connection
-	var grant Grant
-	var status int
-	message := ""
-	e := a.store.change(func(d *diskState) error {
-		k, ok := d.Keys[keyID]
-		if !ok || !k.Enabled || (k.ExpiresAt != nil && !k.ExpiresAt.After(now())) {
-			status = 401
-			message = "This client key is paused, removed, or expired."
-			return fmt.Errorf("denied")
-		}
-		var exists bool
-		conn, exists = d.Connections[id]
-		if !exists || conn.Provider != provider {
-			status = 404
-			message = "Provider connection not found."
-			return fmt.Errorf("denied")
-		}
-		if !conn.Enabled {
-			status = 503
-			message = "This connection is paused."
-			return fmt.Errorf("denied")
-		}
-		found := false
-		for _, g := range k.Grants {
-			if g.ConnectionID == id {
-				grant = g
-				found = true
-			}
-		}
-		if !found || (model != "" && grant.Models != nil && !contains(grant.Models, model)) {
-			status = 403
-			message = "This key does not allow the provider or model."
-			return fmt.Errorf("denied")
-		}
-		for _, account := range grant.AccountIDs {
-			if provider == "zen" || provider == "go" {
-				if account != conn.ID {
-					status = 503
-					message = "Assigned account unavailable."
-					return fmt.Errorf("denied")
-				}
-			} else {
-				if authProviders[account] != provider {
-					status = 503
-					message = "Assigned account unavailable."
-					return fmt.Errorf("denied")
-				}
-			}
-		}
-		if k.DailyLimit != nil && d.Usage[usageID(k.ID)] >= *k.DailyLimit {
-			status = 429
-			message = "Daily request limit reached. Resets at midnight UTC."
-			return fmt.Errorf("denied")
-		}
-		d.Usage[usageID(k.ID)]++
-		t := now()
-		k.LastUsedAt = &t
-		d.Keys[k.ID] = k
-		return nil
-	})
-	if e != nil {
-		if status == 0 {
-			status = 500
-			message = "Could not reserve request."
+	conn, grant, keyID, status, message := a.authorizeProvider(provider, id, value, model, !isWS, nil)
+	if status != 200 {
+		if keyID != "" {
+			a.logRequest(RequestLog{ID: token()[:24], At: now(), ConnectionID: id, Provider: provider, KeyID: keyID, Model: model, Status: status, Transport: "HTTP", ErrorCode: "access_denied"})
 		}
 		fail(c, status, message)
 		return
 	}
-	started := time.Now()
-	defer func() {
-		_ = a.store.change(func(d *diskState) error {
-			d.Requests = append(d.Requests, RequestLog{token()[:24], now(), conn.ID, keyID, model, c.Writer.Status(), time.Since(started).Milliseconds()})
-			if len(d.Requests) > 2000 {
-				d.Requests = d.Requests[len(d.Requests)-2000:]
-			}
-			for k := range d.Usage {
-				if len(k) >= 10 && k[:10] < now().AddDate(0, 0, -32).Format("2006-01-02") {
-					delete(d.Usage, k)
-				}
-			}
-			return nil
-		})
-	}()
-	if provider == "zen" || provider == "go" {
-		a.openCode(c, conn, grant, path, body)
+	if isWS {
+		a.websocket(c, conn, grant, keyID)
 		return
 	}
+
+	started := time.Now()
+	requestID := token()[:24]
+	c.Set("userApiKey", a.usageIdentity(keyID, conn.ID, "HTTP", requestID))
+	defer func() {
+		a.logRequest(RequestLog{ID: requestID, At: now(), ConnectionID: conn.ID, KeyID: keyID, Model: model, Provider: provider, Transport: "HTTP", Status: c.Writer.Status(), DurationMs: time.Since(started).Milliseconds()})
+	}()
+
 	// Fresh policy travels through the Gin request to the SDK selector, including retries.
 	ctx := context.WithValue(c.Request.Context(), scopeKey{}, scope{provider, grant.AccountIDs})
+	if provider == "claude" {
+		ctx = httptransport.WithDecorator(ctx, func(next http.RoundTripper) http.RoundTripper {
+			return claudeCompressionTransport{next}
+		})
+	}
 	c.Request = c.Request.WithContext(ctx)
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	c.Request.ContentLength = int64(len(body))
@@ -394,45 +315,6 @@ func (a *App) provider(c *gin.Context) {
 		a.responses.Responses(c)
 	}
 }
-func (a *App) openCode(c *gin.Context, conn Connection, grant Grant, path string, body []byte) {
-	target, _ := url.Parse(conn.URL)
-	target.Path += path
-	if c.Request.Method == "GET" {
-		models, e := openCodeModels(c.Request.Context(), conn)
-		if e != nil {
-			fail(c, 502, "OpenCode model discovery failed.")
-			return
-		}
-		rows := []gin.H{}
-		for _, id := range models {
-			if grant.Models == nil || contains(grant.Models, id) {
-				rows = append(rows, gin.H{"id": id, "object": "model"})
-			}
-		}
-		c.JSON(200, gin.H{"object": "list", "data": rows})
-		return
-	}
-	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
-		r.Out.URL = target
-		r.Out.Host = target.Host
-		r.Out.Header = make(http.Header)
-		for _, h := range []string{"Content-Type", "Accept", "Anthropic-Version", "Anthropic-Beta", "User-Agent", "X-Opencode-Session", "Session_id", "X-Session-Id"} {
-			if v := r.In.Header.Get(h); v != "" {
-				r.Out.Header.Set(h, v)
-			}
-		}
-		r.Out.Header.Set("Authorization", "Bearer "+conn.APIKey)
-		r.Out.Body = io.NopCloser(bytes.NewReader(body))
-		r.Out.ContentLength = int64(len(body))
-	}, FlushInterval: -1, ModifyResponse: func(r *http.Response) error {
-		r.Header.Del("Set-Cookie")
-		if r.StatusCode >= 300 && r.StatusCode < 400 {
-			return fmt.Errorf("redirect disabled")
-		}
-		return nil
-	}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, e error) { fail(c, 502, "OpenCode request failed.") }}
-	proxy.ServeHTTP(c.Writer, c.Request)
-}
 
 // RefreshAll serializes background quota reads instead of bursting provider endpoints.
 func (a *App) RefreshAll(ctx context.Context) {
@@ -444,4 +326,86 @@ func (a *App) RefreshAll(ctx context.Context) {
 			a.refresh(ctx, conn)
 		}
 	}
+}
+
+func (a *App) authorizeProvider(provider, id, value, model string, reserve bool, expected *Grant) (conn Connection, grant Grant, keyID string, status int, message string) {
+	for _, k := range a.store.read().Keys {
+		if value != "" && k.Hash == digest(value) {
+			keyID = k.ID
+			break
+		}
+	}
+	if keyID == "" {
+		return conn, grant, keyID, 401, "Supply a valid client key."
+	}
+	authProviders := map[string]string{}
+	for _, auth := range a.core.List() {
+		authProviders[auth.ID] = auth.Provider
+	}
+	err := a.store.change(func(d *diskState) error {
+		k, ok := d.Keys[keyID]
+		if !ok || !k.Enabled || (k.ExpiresAt != nil && !k.ExpiresAt.After(now())) {
+			status = 401
+			message = "This client key is paused, removed, or expired."
+			return fmt.Errorf("denied")
+		}
+		var exists bool
+		conn, exists = d.Connections[id]
+		if !exists || conn.Provider != provider {
+			status = 404
+			message = "Provider connection not found."
+			return fmt.Errorf("denied")
+		}
+		if !conn.Enabled {
+			status = 503
+			message = "This connection is paused."
+			return fmt.Errorf("denied")
+		}
+		found := false
+		for _, g := range k.Grants {
+			if g.ConnectionID == id {
+				grant = g
+				found = true
+			}
+		}
+		if !found || (model != "" && grant.Models != nil && !contains(grant.Models, model)) {
+			status = 403
+			message = "This key does not allow the provider or model."
+			return fmt.Errorf("denied")
+		}
+		for _, account := range grant.AccountIDs {
+			if authProviders[account] != provider {
+				status = 503
+				message = "Assigned account unavailable."
+				return fmt.Errorf("denied")
+			}
+		}
+		if k.DailyLimit != nil && d.Usage[usageID(k.ID)] >= *k.DailyLimit {
+			status = 429
+			message = "Daily request limit reached. Resets at midnight UTC."
+			return fmt.Errorf("denied")
+		}
+		if expected != nil && !reflect.DeepEqual(*expected, grant) {
+			status = 403
+			message = "Account access changed. Reconnect the WebSocket."
+			return fmt.Errorf("denied")
+		}
+		if !reserve {
+			return nil
+		}
+		d.Usage[usageID(k.ID)]++
+		t := now()
+		k.LastUsedAt = &t
+		d.Keys[k.ID] = k
+		return nil
+	})
+	if err != nil {
+		if status == 0 {
+			status = 500
+			message = "Could not reserve request."
+		}
+		return
+	}
+	status = 200
+	return
 }

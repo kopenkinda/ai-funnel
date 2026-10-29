@@ -66,6 +66,18 @@ func main() {
 			}
 		}
 	}()
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				app.CheckExpiringResets(ctx)
+			}
+		}
+	}()
 	log.Printf("ai-funnel: embedded CLIProxyAPI, port %d; dashboard key file: %s", port, filepath.Join(dir, "admin-token"))
 	if e = service.Run(ctx); e != nil && !errors.Is(e, context.Canceled) {
 		log.Fatal(e)

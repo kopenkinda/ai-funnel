@@ -1,9 +1,19 @@
-import type { PublicConnection, PublicKey, RequestLog } from "./types.ts";
+import type {
+  PublicConnection,
+  PublicKey,
+  RequestLog,
+  DailyUsage,
+  Settings,
+} from "./types.ts";
 export type State = {
   connections: PublicConnection[];
   keys: PublicKey[];
   requests: RequestLog[];
   publicUrl: string;
+  daily?: Record<string, DailyUsage>;
+  hourly?: Record<string, DailyUsage>;
+  trackingAt?: string | null;
+  settings?: Settings;
 };
 export async function api<T = unknown>(
   path: string,

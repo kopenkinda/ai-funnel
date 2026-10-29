@@ -2,7 +2,7 @@
 
 ## Scope
 
-A personal account pool shared across the owner's devices inside a tailnet. One Go service embeds CLIProxyAPI and serves the existing React dashboard. Codex and Claude subscription accounts log in directly to this service. OpenCode Zen/Go keys remain provider options.
+A personal account pool shared across the owner's devices inside a tailnet. One Go service embeds CLIProxyAPI and serves the existing React dashboard. Codex and Claude subscription accounts log in directly to this service. Additional providers are deferred.
 
 The owner selected the embedded Go service on 29 October 2026 and removed the codex-lb migration requirement. Start with empty local pools. Leave the existing codex-lb service and its account files untouched. Do not import the old companion database or imply its account restrictions carry over.
 
@@ -26,4 +26,4 @@ Account setup offers OAuth, a subscription auth token, or JSON credential import
 
 Use isolated encrypted state and controlled SDK executors to test routing, streaming, provider/account isolation, revocation, concurrency, and persistence. Browser checks cover authenticated setup, keys, direct sign-in controls, persistence, and narrow layout. Build and smoke-test the single-process container.
 
-Live quota reads, a Codex Responses probe, and Claude Code greeting requests through the proxy have been verified locally. Claude subscription smoke tests use the actual Claude Code client. Record legacy model failures and client remapping separately from exact-model successes. Browser-based OAuth completion, real token refresh, OpenCode credentials, and tailnet deployment still require operational verification. Do not claim that mocked requests prove those behaviors. HTTP/SSE is the supported transport; native WebSocket parity remains outside this pass.
+Live quota reads, a Codex Responses probe, and Claude Code greeting requests through the proxy have been verified locally. Claude subscription smoke tests use the actual Claude Code client. Record legacy model failures and client remapping separately from exact-model successes. Browser-based OAuth completion, real token refresh, and tailnet deployment still require operational verification. Do not claim that mocked requests prove those behaviors. Codex supports HTTP/SSE and WebSockets, verified with the native CLI. Claude Code uses HTTP/SSE.

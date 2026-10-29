@@ -4,6 +4,7 @@ import { providerNames, type Account, type PublicConnection } from "./types.ts";
 import { timeUntil } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { AccountsTable } from "./accounts.tsx";
+import { PrivateText } from "./privacy.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -119,12 +120,33 @@ function BankedResets({ accounts }: { accounts: Account[] }) {
         <ul className="flex flex-col gap-2 py-1">
           {reporting.map((account) => (
             <li key={account.id} className="flex flex-col gap-0.5">
-              <span>{account.name}</span>
+              <span>
+                <PrivateText>{account.name}</PrivateText>
+              </span>
               <span className="text-muted-foreground">
                 {account.resetCredits!.available} banked
-                {account.resetCredits!.applicable !== null &&
-                  ` · ${account.resetCredits!.applicable} usable now`}
               </span>
+              {account
+                .resetCredits!.items?.filter(
+                  (c) =>
+                    c.status === "available" &&
+                    new Date(c.expires_at).getTime() > Date.now(),
+                )
+                .map((credit) => (
+                  <span key={credit.id} className="text-muted-foreground">
+                    Use by {new Date(credit.expires_at).toLocaleString()}
+                    {credit.attempt?.result === "nothing_to_reset"
+                      ? " · Nothing to reset yet"
+                      : credit.attempt?.error
+                        ? " · Retry pending"
+                        : ""}
+                  </span>
+                ))}
+              {account.resetCredits!.error && (
+                <span className="text-destructive">
+                  {account.resetCredits!.error}
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -245,7 +267,9 @@ function QuotaCard({
                   style={{ background: color }}
                 />
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="truncate">{account.name}</span>
+                  <span className="truncate">
+                    <PrivateText>{account.name}</PrivateText>
+                  </span>
                   <span className="opacity-60">
                     {timeUntil(quota?.resetsAt ?? null)}
                   </span>

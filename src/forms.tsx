@@ -15,6 +15,7 @@ import {
 } from "./types.ts";
 import { api } from "./api.ts";
 import { CopyButton, Dialog, ErrorMessage, ProviderIcon } from "./ui.tsx";
+import { PrivateText } from "./privacy.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -48,7 +49,6 @@ export function ConnectionForm({
   const [error, setError] = useState("");
   const [method, setMethod] = useState<"oauth" | "token" | "file">("oauth");
   const [authFile, setAuthFile] = useState<File | null>(null);
-  const subscription = provider === "codex" || provider === "claude";
   const [login, setLogin] = useState<{
     url: string;
     state: string;
@@ -99,7 +99,7 @@ export function ConnectionForm({
     setError("");
     const values = Object.fromEntries(new FormData(e.currentTarget));
     try {
-      if (subscription && method !== "oauth") {
+      if (method !== "oauth") {
         let auth: unknown;
         if (method === "file") {
           if (!authFile || authFile.size > 64 * 1024)
@@ -132,20 +132,15 @@ export function ConnectionForm({
           ...values,
           provider,
         }));
-      if (subscription) {
-        const result = await api<{
-          url?: string;
-          authorization_url?: string;
-          state: string;
-        }>("/oauth", "POST", { provider });
-        const url = result.authorization_url || result.url;
-        if (!url || !result.state)
-          throw new Error("Sign-in did not return an authorization URL.");
-        setLogin({ url, state: result.state, connectionId: connection.id });
-      } else {
-        await onSaved();
-        onClose();
-      }
+      const result = await api<{
+        url?: string;
+        authorization_url?: string;
+        state: string;
+      }>("/oauth", "POST", { provider });
+      const url = result.authorization_url || result.url;
+      if (!url || !result.state)
+        throw new Error("Sign-in did not return an authorization URL.");
+      setLogin({ url, state: result.state, connectionId: connection.id });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -242,11 +237,7 @@ export function ConnectionForm({
                         className="flex-1"
                         disabled={busy}
                       >
-                        {p === "zen"
-                          ? "Zen"
-                          : p === "go"
-                            ? "Go"
-                            : providerNames[p]}
+                        {providerNames[p]}
                       </ToggleGroupItem>
                     ))}
                   </ToggleGroup>
@@ -264,37 +255,35 @@ export function ConnectionForm({
                 </Field>
               </>
             )}
-            {subscription && (
-              <Field>
-                <FieldLabel>Account source</FieldLabel>
-                <ToggleGroup
-                  aria-label="Account source"
-                  value={[method]}
-                  onValueChange={(v) => {
-                    if (v[0]) {
-                      setMethod(v[0] as typeof method);
-                      setAuthFile(null);
-                      setError("");
-                    }
-                  }}
-                  variant="outline"
-                  spacing={0}
-                  disabled={busy}
-                  className="w-full"
-                >
-                  <ToggleGroupItem value="oauth" className="flex-1">
-                    OAuth
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="token" className="flex-1">
-                    Auth token
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="file" className="flex-1">
-                    JSON file
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              </Field>
-            )}
-            {subscription && method === "token" && (
+            <Field>
+              <FieldLabel>Account source</FieldLabel>
+              <ToggleGroup
+                aria-label="Account source"
+                value={[method]}
+                onValueChange={(v) => {
+                  if (v[0]) {
+                    setMethod(v[0] as typeof method);
+                    setAuthFile(null);
+                    setError("");
+                  }
+                }}
+                variant="outline"
+                spacing={0}
+                disabled={busy}
+                className="w-full"
+              >
+                <ToggleGroupItem value="oauth" className="flex-1">
+                  OAuth
+                </ToggleGroupItem>
+                <ToggleGroupItem value="token" className="flex-1">
+                  Auth token
+                </ToggleGroupItem>
+                <ToggleGroupItem value="file" className="flex-1">
+                  JSON file
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
+            {method === "token" && (
               <>
                 <Field>
                   <FieldLabel htmlFor="account-token">Auth token</FieldLabel>
@@ -335,7 +324,7 @@ export function ConnectionForm({
                 )}
               </>
             )}
-            {subscription && method === "file" && (
+            {method === "file" && (
               <Field>
                 <FieldLabel htmlFor="account-file">
                   {provider === "codex" ? "auth.json" : "Credential JSON"}
@@ -357,20 +346,6 @@ export function ConnectionForm({
                 </FieldDescription>
               </Field>
             )}
-            {(provider === "zen" || provider === "go") && (
-              <Field>
-                <FieldLabel htmlFor="connection-api-key">
-                  OpenCode API key
-                </FieldLabel>
-                <Input
-                  id="connection-api-key"
-                  name="apiKey"
-                  type="password"
-                  autoComplete="off"
-                  required
-                />
-              </Field>
-            )}
             {error && <ErrorMessage>{error}</ErrorMessage>}
           </FieldGroup>
           <DialogFooter>
@@ -379,11 +354,7 @@ export function ConnectionForm({
             </Button>
             <Button type="submit" disabled={busy}>
               {busy && <Spinner data-icon="inline-start" />}
-              {subscription
-                ? method === "oauth"
-                  ? "Continue to sign-in"
-                  : "Import account"
-                : "Add provider"}
+              {method === "oauth" ? "Continue to sign-in" : "Import account"}
             </Button>
           </DialogFooter>
         </form>
@@ -457,7 +428,9 @@ export function KeyForm({
             <Icon icon={Tick02Icon} size={20} />
           </span>
           <div>
-            <p className="font-medium">{created.key.name}</p>
+            <p className="font-medium">
+              <PrivateText>{created.key.name}</PrivateText>
+            </p>
             <p className="text-sm text-muted-foreground">
               {created.key.grants.length} provider connection
               {created.key.grants.length === 1 ? "" : "s"} allowed
@@ -571,7 +544,7 @@ export function KeyForm({
                         />
                         <FieldContent>
                           <FieldLabel htmlFor={`grant-${c.id}`}>
-                            {c.name}
+                            <PrivateText>{c.name}</PrivateText>
                           </FieldLabel>
                           <FieldDescription>
                             {providerNames[c.provider]}
@@ -581,61 +554,53 @@ export function KeyForm({
                       </Field>
                       {grant && (
                         <FieldGroup>
-                          {c.provider === "codex" || c.provider === "claude" ? (
-                            <FieldSet>
-                              <FieldLegend variant="label" className="sr-only">
-                                Accounts for {c.name}
-                              </FieldLegend>
-                              <FieldGroup data-slot="checkbox-group">
-                                <Field orientation="horizontal">
-                                  <Checkbox
-                                    id={`pool-${c.id}`}
-                                    checked={grant.accountIds === null}
-                                    onCheckedChange={(checked) =>
-                                      update(c.id, {
-                                        accountIds: checked ? null : [],
-                                      })
-                                    }
-                                  />
-                                  <FieldLabel htmlFor={`pool-${c.id}`}>
-                                    Allow the whole account pool
-                                  </FieldLabel>
-                                </Field>
-                                {grant.accountIds !== null &&
-                                  c.accounts.map((a) => (
-                                    <Field key={a.id} orientation="horizontal">
-                                      <Checkbox
-                                        id={`account-${c.id}-${a.id}`}
-                                        checked={grant.accountIds!.includes(
-                                          a.id,
-                                        )}
+                          <FieldSet>
+                            <FieldLegend variant="label" className="sr-only">
+                              Accounts for <PrivateText>{c.name}</PrivateText>
+                            </FieldLegend>
+                            <FieldGroup data-slot="checkbox-group">
+                              <Field orientation="horizontal">
+                                <Checkbox
+                                  id={`pool-${c.id}`}
+                                  checked={grant.accountIds === null}
+                                  onCheckedChange={(checked) =>
+                                    update(c.id, {
+                                      accountIds: checked ? null : [],
+                                    })
+                                  }
+                                />
+                                <FieldLabel htmlFor={`pool-${c.id}`}>
+                                  Allow the whole account pool
+                                </FieldLabel>
+                              </Field>
+                              {grant.accountIds !== null &&
+                                c.accounts.map((a) => (
+                                  <Field key={a.id} orientation="horizontal">
+                                    <Checkbox
+                                      id={`account-${c.id}-${a.id}`}
+                                      checked={grant.accountIds!.includes(a.id)}
 
-                                        onCheckedChange={(checked) =>
-                                          update(c.id, {
-                                            accountIds: checked
-                                              ? [...grant.accountIds!, a.id]
-                                              : grant.accountIds!.filter(
-                                                  (id) => id !== a.id,
-                                                ),
-                                          })
-                                        }
-                                      />
-                                      <FieldContent>
-                                        <FieldLabel
-                                          htmlFor={`account-${c.id}-${a.id}`}
-                                        >
-                                          {a.name}
-                                        </FieldLabel>
-                                      </FieldContent>
-                                    </Field>
-                                  ))}
-                              </FieldGroup>
-                            </FieldSet>
-                          ) : (
-                            <FieldDescription>
-                              Uses this connection's OpenCode credential.
-                            </FieldDescription>
-                          )}
+                                      onCheckedChange={(checked) =>
+                                        update(c.id, {
+                                          accountIds: checked
+                                            ? [...grant.accountIds!, a.id]
+                                            : grant.accountIds!.filter(
+                                                (id) => id !== a.id,
+                                              ),
+                                        })
+                                      }
+                                    />
+                                    <FieldContent>
+                                      <FieldLabel
+                                        htmlFor={`account-${c.id}-${a.id}`}
+                                      >
+                                        <PrivateText>{a.name}</PrivateText>
+                                      </FieldLabel>
+                                    </FieldContent>
+                                  </Field>
+                                ))}
+                            </FieldGroup>
+                          </FieldSet>
                           <Field>
                             <FieldLabel htmlFor={`models-${c.id}`}>
                               Allowed models
@@ -738,22 +703,14 @@ export function ConnectionDetails({
   const [accountStates, setAccountStates] = useState<Record<string, boolean>>(
     {},
   );
-  const [format, setFormat] = useState<"openai" | "anthropic">("openai");
   const [error, setError] = useState("");
   const root = `${origin}/providers/${c.provider}/${c.id}`;
-  const base =
-    c.provider === "codex"
-      ? `${root}/backend-api/codex`
-      : c.provider === "claude"
-        ? root
-        : `${root}/${format}/v1`;
+  const base = c.provider === "codex" ? `${root}/backend-api/codex` : root;
   const model = c.models.find((m) => !m.includes("/")) || "YOUR_MODEL_ID";
   const snippet =
     c.provider === "codex"
-      ? `model_provider = "ai-funnel"\nmodel = "${model}"\n\n[model_providers.ai-funnel]\nname = "ai-funnel"\nbase_url = "${base}"\nwire_api = "responses"\nenv_key = "AI_FUNNEL_KEY"\nrequires_openai_auth = false\nsupports_websockets = false`
-      : c.provider === "claude"
-        ? `export ANTHROPIC_BASE_URL='${base}'\nexport ANTHROPIC_AUTH_TOKEN="$AI_FUNNEL_KEY"\nclaude`
-        : `curl '${base}/${format === "anthropic" ? "messages" : "chat/completions"}' \\\n  -H "Authorization: Bearer $AI_FUNNEL_KEY" \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify({ model, ...(format === "anthropic" ? { max_tokens: 1024 } : {}), messages: [{ role: "user", content: "Hello" }] })}'`;
+      ? `model_provider = "ai-funnel"\nmodel = "${model}"\n\n[model_providers.ai-funnel]\nname = "ai-funnel"\nbase_url = "${base}"\nwire_api = "responses"\nenv_key = "AI_FUNNEL_KEY"\nrequires_openai_auth = false\nsupports_websockets = true`
+      : `export ANTHROPIC_BASE_URL='${base}'\nexport ANTHROPIC_AUTH_TOKEN="$AI_FUNNEL_KEY"\nclaude`;
   return (
     <Dialog
       title={c.name}
@@ -767,68 +724,51 @@ export function ConnectionDetails({
           <p className="text-sm text-muted-foreground">
             {c.provider === "codex"
               ? "Native Codex Responses"
-              : c.provider === "claude"
-                ? "Native Anthropic Messages"
-                : "Choose your client's API format"}
+              : "Native Anthropic Messages"}
           </p>
         </div>
         <Badge variant="secondary" className="ml-auto">
           {c.models.length} models
         </Badge>
       </div>
-      {(c.provider === "codex" || c.provider === "claude") &&
-        c.accounts.length > 0 && (
-          <div className="flex flex-col gap-2" aria-label="Manage accounts">
-            {c.accounts.map((account) => {
-              const enabled =
-                accountStates[account.id] ?? account.status !== "paused";
-              return (
-                <div
-                  key={account.id}
-                  className="flex items-center justify-between gap-3 border-b py-2 last:border-0"
+      {c.accounts.length > 0 && (
+        <div className="flex flex-col gap-2" aria-label="Manage accounts">
+          {c.accounts.map((account) => {
+            const enabled =
+              accountStates[account.id] ?? account.status !== "paused";
+            return (
+              <div
+                key={account.id}
+                className="flex items-center justify-between gap-3 border-b py-2 last:border-0"
+              >
+                <span className="truncate text-sm">
+                  <PrivateText>{account.email || account.name}</PrivateText>
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await api(
+                        `/accounts/${encodeURIComponent(account.id)}`,
+                        "PATCH",
+                        { enabled: !enabled },
+                      );
+                      setAccountStates((previous) => ({
+                        ...previous,
+                        [account.id]: !enabled,
+                      }));
+                    } catch (e) {
+                      setError((e as Error).message);
+                    }
+                  }}
                 >
-                  <span className="truncate text-sm">
-                    {account.email || account.name}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        await api(
-                          `/accounts/${encodeURIComponent(account.id)}`,
-                          "PATCH",
-                          { enabled: !enabled },
-                        );
-                        setAccountStates((previous) => ({
-                          ...previous,
-                          [account.id]: !enabled,
-                        }));
-                      } catch (e) {
-                        setError((e as Error).message);
-                      }
-                    }}
-                  >
-                    {enabled ? "Pause" : "Resume"}
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      {(c.provider === "zen" || c.provider === "go") && (
-        <ToggleGroup
-          value={[format]}
-          onValueChange={(v) => {
-            if (v[0]) setFormat(v[0] as "openai" | "anthropic");
-          }}
-          variant="outline"
-          spacing={0}
-          aria-label="API format"
-        >
-          <ToggleGroupItem value="openai">OpenAI format</ToggleGroupItem>
-          <ToggleGroupItem value="anthropic">Anthropic format</ToggleGroupItem>
-        </ToggleGroup>
+                  {enabled ? "Pause" : "Resume"}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
       )}
       <FieldGroup>
         <Field>
@@ -843,11 +783,7 @@ export function ConnectionDetails({
         <Field>
           <div className="flex items-center justify-between gap-2">
             <FieldLabel>
-              {c.provider === "codex"
-                ? "Codex config.toml"
-                : c.provider === "claude"
-                  ? "Claude Code"
-                  : "Example request"}
+              {c.provider === "codex" ? "Codex config.toml" : "Claude Code"}
             </FieldLabel>
             <CopyButton
               value={snippet}

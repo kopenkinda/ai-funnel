@@ -1,6 +1,6 @@
 # ai-funnel
 
-One personal service for Codex, Claude subscriptions, and OpenCode Zen/Go. The Go backend embeds [CLIProxyAPI v8.0.47](https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.47) and serves the React dashboard. Codex and Claude accounts log in directly here. You do not need separate codex-lb or CLIProxyAPI deployments.
+One personal service for Codex and Claude subscriptions. The Go backend embeds [CLIProxyAPI v8.0.47](https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.47) and serves the React dashboard. Codex and Claude accounts log in directly here. You do not need separate codex-lb or CLIProxyAPI deployments.
 
 ## Run
 
@@ -31,7 +31,19 @@ Use **Connections → Add account** for additional subscription accounts. **URL 
 
 Start these accounts from scratch. There is no codex-lb migration or account import from the former companion backend. Existing services and their files are left untouched. The Go backend does not read the old SQLite database.
 
-For OpenCode, add a Zen or Go key directly. Each credential is a separate connection. Model discovery loads the available choices; credential validity is confirmed by the first inference request. Routing follows the current [OpenCode inference API](https://opencode.ai/v2/docs/console/api/inference/). Balance and reset reporting is not implemented for Zen/Go; use OpenCode Console for billing details.
+## Usage and request logs
+
+Usage graphs show token totals and estimated API-equivalent cost for Today, 7d, 30d, 90d, the past year or All time. Both graphs share the selected period and split uncached input, cache reads, cache writes, output and reasoning on hover. Dates use UTC, with hourly points for Today and monthly points for longer histories. The backend uses the SDK's non-overlapping token accounting. Daily aggregates persist independently of the 10,000 retained request records; recent hourly aggregates retain two days. Existing request metadata supplies hourly history on the first upgrade.
+
+Prices are versioned with each request, using the [OpenAI](https://developers.openai.com/api/docs/pricing) and [Claude](https://platform.claude.com/docs/en/about-claude/pricing) public API tables verified on 29 October 2026. Long-context and supported service-tier rates apply. Unknown models or unclassified usage remain unpriced. Cache-write retention is not available in the SDK usage record, so those estimates span the published short- and long-retention prices. These estimates exclude subscription fees and separate tool charges.
+
+Activity supports search, provider/account/key/model/status/transport filters, pagination and request details. Records include account, model, client and upstream transport, latency, TTFT, output speed, tokens and cost. Prompts, response text, raw upstream errors and bearer credentials are not persisted.
+
+**Settings → Use expiring banked resets** enables Codex redemption during a credit's final five minutes. It defaults off and persists on the server. The scheduler checks every 15 seconds while the service runs, refreshes credit status before redemption, and retries temporary failures or `nothing_to_reset` every 30 seconds until expiry. Redemption uses T3 Code's deterministic request ID, including after restarts. Successful credits are not redeemed twice. Expiry details are available from the banked-reset badge.
+
+## T3 Code usage hub
+
+In **Settings**, generate a hub key. Add a CLIProxyAPI hub in T3 Code with the service's root URL and that management key. Replacing the key invalidates the previous one. The hub exposes `/v0/management/auth-files` and a scoped `/v0/management/api-call` for official Codex/Claude usage endpoints and Codex reset-credit operations. It does not expose raw SDK management, credentials or arbitrary outbound requests.
 
 ## Device keys and provider URLs
 
@@ -39,15 +51,15 @@ Create a shared key and select its providers, accounts, and models. You can also
 
 Each provider keeps its own request and response shape:
 
-| Provider         | Base URL                                                      |
-| ---------------- | ------------------------------------------------------------- |
-| Codex            | `/providers/codex/codex/backend-api/codex`                    |
-| Codex compatible | `/providers/codex/codex/v1`                                   |
-| Claude Code      | `/providers/claude/claude`                                    |
-| Zen              | `/providers/zen/<connection-id>/openai/v1` or `/anthropic/v1` |
-| Go               | `/providers/go/<connection-id>/openai/v1` or `/anthropic/v1`  |
+| Provider         | Base URL                                   |
+| ---------------- | ------------------------------------------ |
+| Codex            | `/providers/codex/codex/backend-api/codex` |
+| Codex compatible | `/providers/codex/codex/v1`                |
+| Claude Code      | `/providers/claude/claude`                 |
 
-Use `Authorization: Bearer <shared-key>` or `x-api-key: <shared-key>`. Copy the complete URLs from **URL & setup**. Codex supports Responses and compact; Claude supports Messages and count_tokens. HTTP and SSE are supported. Codex configuration sets `supports_websockets = false`.
+Use `Authorization: Bearer <shared-key>` or `x-api-key: <shared-key>`. Copy the complete URLs from **URL & setup**. Codex supports Responses and compact; Claude supports Messages and count_tokens. HTTP and SSE are supported. Codex supports end-to-end WebSockets with `supports_websockets = true`. Each WebSocket turn rechecks key, model and daily-limit policies. Changing account assignments requires a reconnect.
+
+Provider requests accept gzip and zstd, with a 16 MiB limit on both wire and decoded bodies. HTTP responses negotiate gzip or zstd through `Accept-Encoding`, including SSE with per-event flushing. Codex WebSockets negotiate permessage-deflate separately. Large upstream Codex HTTP requests use zstd; large Claude Messages requests use gzip. Claude Code currently compresses requests only for Anthropic's hostname, so a custom base URL sends plain JSON to the proxy and the proxy compresses the provider hop. Client configuration files are not modified.
 
 Use Claude Code for Claude subscription traffic. Set `ANTHROPIC_BASE_URL` to the Claude Code base URL above and `ANTHROPIC_AUTH_TOKEN` to your shared client key. Live greeting checks were run with the actual Claude Code CLI through this proxy. Current model IDs worked; the SDK catalog also lists legacy IDs that fail or are remapped by the client. See [the verification results](docs/verification.md).
 
@@ -57,7 +69,7 @@ The app enforces provider, account, model, expiry, pause, and daily request poli
 
 `DATA_DIR/state.enc` contains AES-256-GCM encrypted credentials, account state, key policies, quota snapshots, sessions, and request metadata. `master.key` decrypts it. The SDK uses this encrypted store for login and token refresh; persistent plaintext credential files are not created. Temporary OAuth callback files are kept in the private `oauth-sessions` directory and consumed by the SDK. Files use owner-only permissions. One process can hold a data directory at a time.
 
-Back up the whole data directory while the service is stopped. Losing the master key makes the stored state unreadable. Activity retains 2,000 request metadata records and displays the most recent 100. Prompts and response bodies are not stored in activity. Dashboard sessions use HTTP-only cookies, and mutations reject foreign origins.
+Back up the whole data directory while the service is stopped. Losing the master key makes the stored state unreadable. Activity retains 10,000 request metadata records with 50 per page. Prompts and response bodies are not stored in activity. Dashboard sessions use HTTP-only cookies, and mutations reject foreign origins.
 
 Set `PUBLIC_URL` to the exact HTTPS origin provided by Tailscale Serve. Keep the service bound to loopback and forward your private tailnet hostname to port 4310. A container also runs a single Go process:
 

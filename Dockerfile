@@ -15,7 +15,7 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -o /ai-funnel ./cmd/funnel
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* && useradd --uid 10001 --create-home funnel
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* && useradd --uid 10001 --create-home funnel
 WORKDIR /app
 ENV HOST=0.0.0.0 PORT=4310 DATA_DIR=/app/data
 COPY --from=backend /ai-funnel /app/ai-funnel

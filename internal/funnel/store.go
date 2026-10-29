@@ -40,29 +40,48 @@ type Connection struct {
 	ID        string    `json:"id"`
 	Provider  string    `json:"provider"`
 	Name      string    `json:"name"`
-	URL       string    `json:"url"`
 	Enabled   bool      `json:"enabled"`
-	APIKey    string    `json:"apiKey,omitempty"`
-	Models    []string  `json:"models,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 type RequestLog struct {
-	ID           string    `json:"id"`
-	At           time.Time `json:"at"`
-	ConnectionID string    `json:"connectionId"`
-	KeyID        string    `json:"keyId"`
-	Model        string    `json:"model"`
-	Status       int       `json:"status"`
-	DurationMs   int64     `json:"durationMs"`
+	ID                string    `json:"id"`
+	At                time.Time `json:"at"`
+	ConnectionID      string    `json:"connectionId"`
+	KeyID             string    `json:"keyId"`
+	KeyName           string    `json:"keyName,omitempty"`
+	Model             string    `json:"model"`
+	Status            int       `json:"status"`
+	DurationMs        int64     `json:"durationMs"`
+	ParentID          string    `json:"parentId,omitempty"`
+	AccountID         string    `json:"accountId,omitempty"`
+	AccountName       string    `json:"accountName,omitempty"`
+	Plan              string    `json:"plan,omitempty"`
+	Provider          string    `json:"provider,omitempty"`
+	Transport         string    `json:"transport,omitempty"`
+	UpstreamTransport string    `json:"upstreamTransport,omitempty"`
+	TTFTMs            int64     `json:"ttftMs,omitempty"`
+	Tokens            *Tokens   `json:"tokens,omitempty"`
+	Cost              *Cost     `json:"cost,omitempty"`
+	ErrorCode         string    `json:"errorCode,omitempty"`
+	Reasoning         string    `json:"reasoning,omitempty"`
+}
+type Settings struct {
+	AutoUseResets bool   `json:"autoUseResets"`
+	HubTokenHash  string `json:"hubTokenHash,omitempty"`
 }
 type diskState struct {
-	Snapshots   map[string]Snapshot   `json:"snapshots"`
-	Connections map[string]Connection `json:"connections"`
-	Keys        map[string]Key        `json:"keys"`
-	Auths       map[string]*core.Auth `json:"auths"`
-	Sessions    map[string]time.Time  `json:"sessions"`
-	Usage       map[string]int        `json:"usage"`
-	Requests    []RequestLog          `json:"requests"`
+	ResetAttempts map[string]ResetAttempt `json:"resetAttempts,omitempty"`
+	Settings      Settings                `json:"settings"`
+	Snapshots     map[string]Snapshot     `json:"snapshots"`
+	Connections   map[string]Connection   `json:"connections"`
+	Keys          map[string]Key          `json:"keys"`
+	Auths         map[string]*core.Auth   `json:"auths"`
+	Sessions      map[string]time.Time    `json:"sessions"`
+	Usage         map[string]int          `json:"usage"`
+	Requests      []RequestLog            `json:"requests"`
+	Daily         map[string]DailyUsage   `json:"daily,omitempty"`
+	Hourly        map[string]DailyUsage   `json:"hourly"`
+	TrackingAt    *time.Time              `json:"trackingAt,omitempty"`
 }
 type Store struct {
 	mu     sync.Mutex
@@ -142,6 +161,20 @@ func NewStore(dir, admin string) (*Store, error) {
 	} else if !os.IsNotExist(e) {
 		return nil, e
 	}
+	if s.state.Hourly == nil {
+		s.state.Hourly = map[string]DailyUsage{}
+		// Upgrade existing metadata so Today includes already-recorded usage.
+		for _, r := range s.state.Requests {
+			if r.Tokens != nil && r.Cost != nil && !r.At.Before(now().AddDate(0, 0, -2)) {
+				s.state.addHourly(r.At, r.Provider, *r.Tokens, *r.Cost)
+			}
+		}
+		if e == nil {
+			if err := s.change(func(*diskState) error { return nil }); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return s, nil
 }
 func (s *Store) read() diskState {
@@ -200,11 +233,13 @@ func (s *Store) List(context.Context) ([]*core.Auth, error) {
 	d := s.read()
 	out := make([]*core.Auth, 0, len(d.Auths))
 	for _, a := range d.Auths {
+		defaultTransport(a)
 		out = append(out, a)
 	}
 	return out, nil
 }
 func (s *Store) Save(_ context.Context, a *core.Auth) (string, error) {
+	defaultTransport(a)
 	b, e := json.Marshal(a)
 	if e != nil {
 		return "", e
@@ -253,3 +288,21 @@ func (s *Store) Delete(_ context.Context, id string) error {
 	return s.change(func(d *diskState) error { delete(d.Auths, id); return nil })
 }
 func usageID(id string) string { return now().Format("2006-01-02") + ":" + id }
+
+// Default Codex imports to native WebSockets while preserving explicit choices.
+func defaultTransport(a *core.Auth) {
+	if a.Provider != "codex" {
+		return
+	}
+	if a.Attributes == nil {
+		a.Attributes = map[string]string{}
+	}
+	if _, exists := a.Attributes["websockets"]; exists {
+		return
+	}
+	value := "true"
+	if v, exists := a.Metadata["websockets"]; exists {
+		value = fmt.Sprint(v)
+	}
+	a.Attributes["websockets"] = value
+}

@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	sdkapi "github.com/router-for-me/CLIProxyAPI/v8/sdk/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/claude"
@@ -18,6 +20,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdkusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -57,6 +60,8 @@ func contains(items []string, v string) bool {
 }
 
 type App struct {
+	usageOwner string
+	resetMu    sync.Mutex
 	store      *Store
 	core       *core.Manager
 	engine     *gin.Engine
@@ -88,9 +93,11 @@ func NewRuntime(store *Store, host string, port int, publicURL, dist string) (*A
 	cfg.RemoteManagement.SecretKey = string(hashed)
 	cfg.RemoteManagement.AllowRemote = true
 	cfg.RequestLog = false
+	cfg.Codex.UpstreamRequestCompression = true
 	sdkauth.RegisterTokenStore(store)
 	manager := core.NewManager(store, &selector{}, nil)
-	a := &App{store: store, core: manager, management: management, publicURL: strings.TrimRight(publicURL, "/"), dist: dist, failures: map[string][]int64{}, gate: make(chan struct{}, 1)}
+	a := &App{usageOwner: token(), store: store, core: manager, management: management, publicURL: strings.TrimRight(publicURL, "/"), dist: dist, failures: map[string][]int64{}, gate: make(chan struct{}, 1)}
+	sdkusage.RegisterNamedPlugin("ai-funnel:"+store.dir, a)
 	// OAuth callback files stay separate from the encrypted account store.
 	if e = os.MkdirAll(cfg.AuthDir, 0700); e != nil {
 		return nil, nil, e
@@ -103,12 +110,21 @@ func NewRuntime(store *Store, host string, port int, publicURL, dist string) (*A
 	svc, e := cliproxy.NewBuilder().WithConfig(cfg).WithConfigPath(cfgPath).WithCoreAuthManager(manager).WithWatcherFactory(func(string, string, func(*config.Config)) (*cliproxy.WatcherWrapper, error) {
 		return &cliproxy.WatcherWrapper{}, nil
 	}).WithServerOptions(
-		sdkapi.WithMiddleware(a.middleware),
+		// SDK-owned routes stay private. Our routes run after its negotiated
+		// response compression rather than aborting that middleware early.
+		sdkapi.WithMiddleware(func(c *gin.Context) {
+			if c.FullPath() != "" {
+				a.middleware(c)
+			}
+		}),
 		sdkapi.WithEngineConfigurator(func(g *gin.Engine) { _ = g.SetTrustedProxies(nil); a.engine = g }),
 		sdkapi.WithRouterConfigurator(func(_ *gin.Engine, b *handlers.BaseAPIHandler, _ *config.Config) {
 			a.base = b
 			a.responses = openai.NewOpenAIResponsesAPIHandler(b)
+			a.responses.AccessManager = sdkaccess.NewManager()
+			a.responses.AccessManager.SetProviders([]sdkaccess.Provider{&websocketAccess{app: a}})
 			a.claude = claude.NewClaudeCodeAPIHandler(b)
+			a.engine.Use(a.middleware)
 		}),
 	).Build()
 	return a, svc, e
@@ -159,6 +175,10 @@ func (a *App) middleware(c *gin.Context) {
 		c.Data(200, "text/html; charset=utf-8", []byte("<!doctype html><title>Sign-in received</title><p>Sign-in received. Return to your dashboard.</p>"))
 		return
 	}
+	if strings.HasPrefix(path, "/v0/management/") {
+		a.hub(c)
+		return
+	}
 	if strings.HasPrefix(path, "/api/") {
 		a.dashboard(c)
 		return
@@ -180,5 +200,6 @@ func (a *App) middleware(c *gin.Context) {
 		p = filepath.Join(a.dist, "index.html")
 	}
 	c.Header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+	c.Status(http.StatusOK)
 	http.ServeFile(c.Writer, c.Request, p)
 }

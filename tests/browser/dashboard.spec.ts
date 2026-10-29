@@ -15,6 +15,11 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
   await page
     .getByRole("button", { name: "Connect your first provider" })
     .click();
+  await expect(
+    page
+      .getByRole("group", { name: "Provider", exact: true })
+      .getByRole("button"),
+  ).toHaveText(["Codex", "Claude"]);
   await expect(page.getByLabel("Server URL")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Continue to sign-in" }),
@@ -104,12 +109,12 @@ test("login fits a narrow viewport and keeps demo access removed", async ({
   ).toBe(true);
 });
 
-test("usage shows reported model pools and banked resets without empty limits", async ({
+test("usage shows reported limits and persists email privacy", async ({
   page,
 }) => {
   const account = {
     id: "usage-fixture",
-    name: "Device account",
+    name: "device@example.com",
     email: "device@example.com",
     plan: "Plus",
     status: "active",
@@ -168,12 +173,216 @@ test("usage shows reported model pools and banked resets without empty limits", 
   );
   await page.goto("/");
   const codex = page.getByRole("region", { name: "Codex usage", exact: true });
+  const email = codex.getByText("device@example.com", { exact: true });
+  await expect(
+    page.getByRole("button", { name: "Show emails" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(email).toHaveCSS("filter", /blur\(/);
+  await expect(email.locator("..")).not.toHaveAttribute("title");
   await expect(codex.getByText("73%", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Monthly usage", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
   const fable = page.getByRole("region", { name: "Fable weekly usage" });
   await expect(fable.getByText("0%", { exact: true })).toBeVisible();
   await page.getByText("2 banked resets", { exact: true }).hover();
-  await expect(page.getByRole("tooltip")).toContainText("0 usable now");
-  await expect(page.getByRole("tooltip")).toContainText("Device account");
+  await expect(page.getByRole("tooltip")).toContainText("2 banked");
+  await expect(page.getByRole("tooltip")).not.toContainText("usable now");
+  await expect(
+    page.getByRole("tooltip").getByText("device@example.com"),
+  ).toHaveCSS("filter", /blur\(/);
+  await page.getByRole("button", { name: "Show emails" }).click();
+  await expect(email).toHaveCSS("filter", "none");
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Hide emails" }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await expect(email).toHaveCSS("filter", "none");
+  await page.getByRole("button", { name: "Hide emails" }).click();
+  await page.reload();
+  await expect(email).toHaveCSS("filter", /blur\(/);
+});
+
+test("usage accounting, hub settings and request filters", async ({ page }) => {
+  const day = new Date().toISOString().slice(0, 10);
+  const dateAgo = (days: number) => {
+    const date = new Date(`${day}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() - days);
+    return date.toISOString().slice(0, 10);
+  };
+  const tokens = {
+    input: 200,
+    cacheRead: 800,
+    cacheWrite: 0,
+    output: 60,
+    reasoning: 40,
+    unclassified: 0,
+    total: 1100,
+  };
+  const cost = {
+    min: 0.00148,
+    max: 0.00148,
+    input: 0.0004,
+    cacheRead: 0.00008,
+    cacheWrite: 0,
+    output: 0.0006,
+    reasoning: 0.0004,
+    priced: true,
+    model: "gpt-6.1-sol",
+  };
+  await page.request.post("/api/session", {
+    data: { token: "browser-test-dashboard-key" },
+  });
+  await page.route("**/api/state", async (route) => {
+    const state = await (await route.fetch()).json();
+    await route.fulfill({
+      json: {
+        ...state,
+        daily: Object.fromEntries(
+          [0, 10, 40, 100, 400].map((age) => [
+            `fixture-${age}`,
+            {
+              day: dateAgo(age),
+              provider: "codex",
+              tokens,
+              cost,
+              requests: 1,
+              unpriced: 0,
+            },
+          ]),
+        ),
+        hourly: {
+          fixture: {
+            day,
+            hour: `${day}T00:00:00Z`,
+            provider: "codex",
+            tokens,
+            cost,
+            requests: 1,
+            unpriced: 0,
+          },
+        },
+      },
+    });
+  });
+  const queries: string[] = [];
+  await page.route("**/api/requests?*", (route) => {
+    queries.push(route.request().url());
+    return route.fulfill({
+      json: {
+        items: [
+          {
+            id: "request-fixture",
+            at: new Date().toISOString(),
+            connectionId: "codex",
+            keyId: "fixture",
+            model: "gpt-6.1-sol",
+            accountName: "device@example.com",
+            status: 200,
+            transport: "WS",
+            durationMs: 2000,
+            ttftMs: 1000,
+            tokens,
+            cost,
+          },
+        ],
+        total: 1,
+        page: 1,
+        pages: 1,
+        models: ["gpt-6.1-sol"],
+      },
+    });
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Token breakdown" }),
+  ).toHaveText("1.1K");
+  await expect(page.getByText("Tracking starts", { exact: false })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Token breakdown" }).hover();
+  await expect(page.getByRole("tooltip")).toContainText("Cache read");
+  await expect(page.getByRole("tooltip")).toContainText("800");
+  const periods = page.getByRole("group", { name: "Usage period" });
+  for (const [period, total, cost] of [
+    ["Today", "1.1K", "$0.0015"],
+    ["30d", "2.2K", "$0.003"],
+    ["90d", "3.3K", "$0.0044"],
+    ["Year", "4.4K", "$0.0059"],
+    ["All time", "5.5K", "$0.0074"],
+    ["7d", "1.1K", "$0.0015"],
+  ]) {
+    await periods.getByRole("button", { name: period, exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Token breakdown" }),
+    ).toHaveText(total);
+    await expect(
+      page.getByRole("button", { name: "Cost breakdown" }),
+    ).toHaveText(cost);
+    await expect(
+      periods.getByRole("button", { name: period, exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+  }
+  await expect(page.locator(".recharts-area-curve")).not.toHaveCount(0);
+  await expect(page.locator(".recharts-bar")).toHaveCount(0);
+  const graph = page
+    .getByRole("region", { name: "API usage summary" })
+    .locator("[data-chart]")
+    .first();
+  await graph.hover({ position: { x: 150, y: 30 } });
+  await expect(graph.locator(".recharts-tooltip-wrapper")).toContainText(
+    "Cache read",
+  );
+  await expect(graph.locator(".recharts-tooltip-wrapper")).not.toContainText(
+    "Invalid Date",
+  );
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const auto = page.getByRole("checkbox", {
+    name: "Automatically redeem 5 minutes before expiry",
+  });
+  await expect(auto).not.toBeChecked();
+  await auto.check();
+  await expect(auto).toBeChecked();
+  await expect(page.getByLabel("Hub URL")).toHaveValue(/127\.0\.0\.1:4319/);
+  await page
+    .getByRole("button", { name: "Generate hub key", exact: true })
+    .click();
+  await expect(page.getByLabel("Hub management key")).toHaveValue(/^sk-hub-/);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(auto).toBeChecked();
+  await auto.uncheck();
+  await expect(auto).not.toBeChecked();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await expect(
+    page.getByRole("cell", { name: "WS", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("device@example.com", { exact: true })).toHaveCSS(
+    "filter",
+    /blur\(/,
+  );
+  await page.getByLabel("Search requests").fill("request-fixture");
+  await expect.poll(() => queries.at(-1)).toContain("q=request-fixture");
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Request details" }),
+  ).toContainText("Cache read");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "Usage", exact: true }).click();
+  await page.screenshot({
+    path: "/tmp/ai-funnel-observability-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "/tmp/ai-funnel-observability-mobile.png",
+    fullPage: true,
+  });
 });

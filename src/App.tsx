@@ -17,11 +17,16 @@ import {
   PlayIcon,
   Refresh01Icon,
   Sun01Icon,
+  Settings01Icon,
 } from "@hugeicons/core-free-icons";
 import type { PublicConnection, PublicKey } from "./types.ts";
 import { api, relative, type State } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
+import { UsageMetrics } from "./metrics";
+import { ActivityLog } from "./activity";
+import { DashboardSettings } from "./settings";
 import { UsageOverview } from "./usage.tsx";
+import { PrivacyButton, PrivateText } from "./privacy.tsx";
 import { ConnectionDetails, ConnectionForm, KeyForm } from "./forms.tsx";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,14 +40,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+
 import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
 import {
   Empty,
@@ -92,7 +90,9 @@ export function App() {
   const [tab, setTab] = useState<Tab>("pool");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
-  const [modal, setModal] = useState<"connect" | "key" | null>(null);
+  const [modal, setModal] = useState<"connect" | "key" | "settings" | null>(
+    null,
+  );
   const [details, setDetails] = useState<PublicConnection | null>(null);
   const [reconnect, setReconnect] = useState<PublicConnection | null>(null);
   const [remove, setRemove] = useState<{
@@ -183,6 +183,7 @@ export function App() {
       <Navigation
         tab={tab}
         onTab={setTab}
+        onSettings={() => setModal("settings")}
         onExit={() => {
           void action("logout", async () => {
             await api("/session", "DELETE");
@@ -235,6 +236,9 @@ export function App() {
               </AlertAction>
             </Alert>
           )}
+          {tab === "pool" && (
+            <UsageMetrics daily={state.daily} hourly={state.hourly} />
+          )}
           {tab === "pool" &&
             (connections.length ? (
               <UsageOverview
@@ -254,13 +258,10 @@ export function App() {
                         <span className="flex items-center gap-3">
                           <ProviderIcon provider={c.provider} />
                           <span className="min-w-0 wrap-anywhere">
-                            {c.name}
+                            <PrivateText>{c.name}</PrivateText>
                           </span>
                         </span>
                       </CardTitle>
-                      <CardDescription className="mt-2 break-all">
-                        {c.url}
-                      </CardDescription>
                       <CardAction>
                         <Badge variant={c.error ? "destructive" : "secondary"}>
                           {!c.enabled
@@ -422,78 +423,22 @@ export function App() {
               </Empty>
             ))}
           {tab === "activity" && (
-            <section className="min-w-0 overflow-hidden rounded-2xl border">
-              {state.requests.length ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Time</TableHead>
-                      <TableHead>Connection / model</TableHead>
-                      <TableHead>Key</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Duration</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {state.requests.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell>
-                          <span title={new Date(r.at).toLocaleString()}>
-                            {relative(r.at)}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <p>
-                            {connections.find((c) => c.id === r.connectionId)
-                              ?.name || "Removed connection"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {r.model || "Model discovery"}
-                          </p>
-                        </TableCell>
-                        <TableCell>
-                          {state.keys.find((k) => k.id === r.keyId)?.name ||
-                            "Removed key"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              r.status >= 400 ? "destructive" : "secondary"
-                            }
-                          >
-                            {r.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {r.durationMs < 1000
-                            ? `${r.durationMs} ms`
-                            : `${(r.durationMs / 1000).toFixed(1)} s`}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              ) : (
-                <Empty className="min-h-80">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <Icon icon={Activity01Icon} />
-                    </EmptyMedia>
-                    <EmptyTitle>No requests yet</EmptyTitle>
-                    <EmptyDescription>
-                      Requests made with your shared keys will appear here.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )}
-              <div className="border-t px-4 py-3 text-xs text-muted-foreground">
-                Only request metadata is stored. Prompt and response content is
-                never logged.
-              </div>
-            </section>
+            <ActivityLog
+              connections={connections}
+              keys={state.keys}
+              refreshId={state.requests[0]?.id}
+            />
           )}
         </div>
       </main>
+      {modal === "settings" && (
+        <DashboardSettings
+          settings={state.settings}
+          origin={origin}
+          onSaved={reload}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal === "connect" && (
         <ConnectionForm onClose={() => setModal(null)} onSaved={reload} />
       )}
@@ -531,7 +476,7 @@ export function App() {
                 Remove {remove.type === "keys" ? "shared key" : "connection"}?
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {remove.name}.{" "}
+                <PrivateText>{remove.name}</PrivateText>.{" "}
                 {remove.type === "keys"
                   ? "This key will stop working through ai-funnel."
                   : "Clients using this URL will stop working. Upstream accounts stay in their original service."}
@@ -564,10 +509,12 @@ function Navigation({
   tab,
   onTab,
   onExit,
+  onSettings,
 }: {
   tab: Tab;
   onTab: (value: Tab) => void;
   onExit: () => void;
+  onSettings: () => void;
 }) {
   return (
     <header className="sticky top-0 z-10 border-b bg-background">
@@ -595,6 +542,15 @@ function Navigation({
           ))}
         </nav>
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Settings"
+            onClick={onSettings}
+          >
+            <Icon icon={Settings01Icon} />
+          </Button>
+          <PrivacyButton />
           <ThemeSwitch />
           <Button
             variant="ghost"
@@ -649,13 +605,11 @@ function EmptyPool({ onConnect }: { onConnect: () => void }) {
           <div className="flex items-center gap-2">
             <ProviderIcon provider="codex" />
             <ProviderIcon provider="claude" />
-            <ProviderIcon provider="go" />
           </div>
         </EmptyMedia>
         <EmptyTitle>Bring your accounts together.</EmptyTitle>
         <EmptyDescription>
-          Connect your Codex pool, Claude subscriptions, or OpenCode credentials
-          to see their accounts and limits.
+          Connect your Codex and Claude accounts.
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
@@ -686,7 +640,9 @@ function KeyRow({
   return (
     <Card size="sm" aria-label={`Key ${k.name}`}>
       <CardHeader>
-        <CardTitle className="min-w-0 wrap-anywhere">{k.name}</CardTitle>
+        <CardTitle className="min-w-0 wrap-anywhere">
+          <PrivateText>{k.name}</PrivateText>
+        </CardTitle>
         <CardDescription>
           <code>{k.prefix}••••••••</code>
         </CardDescription>
@@ -722,7 +678,7 @@ function KeyRow({
               const c = connections.find((c) => c.id === g.connectionId);
               return (
                 <Badge key={g.connectionId} variant="secondary">
-                  {c?.name || "Removed connection"}
+                  <PrivateText>{c?.name || "Removed connection"}</PrivateText>
                 </Badge>
               );
             })}
@@ -762,20 +718,24 @@ function KeyRow({
                 return (
                   <div key={g.connectionId} className="flex flex-col gap-1">
                     <p className="text-sm font-medium">
-                      {c?.name || "Removed connection"}
+                      <PrivateText>
+                        {c?.name || "Removed connection"}
+                      </PrivateText>
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {g.accountIds
-                        ? g.accountIds
-                            .map(
-                              (id) =>
-                                c?.accounts.find((a) => a.id === id)?.name ||
-                                "Missing account",
-                            )
-                            .join(", ")
-                        : k.imported && c?.provider === "codex"
-                          ? "All accounts in this provider"
-                          : "Whole connection pool"}
+                      <PrivateText>
+                        {g.accountIds
+                          ? g.accountIds
+                              .map(
+                                (id) =>
+                                  c?.accounts.find((a) => a.id === id)?.name ||
+                                  "Missing account",
+                              )
+                              .join(", ")
+                          : k.imported && c?.provider === "codex"
+                            ? "All accounts in this provider"
+                            : "Whole connection pool"}
+                      </PrivateText>
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {g.models

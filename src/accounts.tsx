@@ -2,6 +2,7 @@ import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import { ArrowUpRight01Icon, Clock01Icon } from "@hugeicons/core-free-icons";
 import { providerNames, type Account, type PublicConnection } from "./types.ts";
 import { timeUntil } from "./api.ts";
+import { PrivateText, usePrivacy } from "./privacy.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -22,6 +23,7 @@ export function AccountsTable({
 }: {
   connections: PublicConnection[];
 }) {
+  const privacy = usePrivacy((state) => state.enabled);
   const rows = connections.flatMap((connection) =>
     connection.accounts
       .filter((account) => account.quotas.some((q) => q.remaining !== null))
@@ -53,18 +55,25 @@ export function AccountsTable({
             >
               <TableCell>
                 <div className="flex flex-col gap-0.5">
-                  <span className="font-medium" title={account.name}>
-                    {account.email || account.name}
+                  <span
+                    className="font-medium"
+                    title={privacy ? undefined : account.name}
+                  >
+                    <PrivateText>{account.email || account.name}</PrivateText>
                   </span>
                   <span
                     className="text-xs text-muted-foreground"
-                    title={account.id}
+                    title={privacy ? undefined : account.id}
                   >
                     ID{" "}
-                    {account.id.length > 18
-                      ? `${account.id.slice(0, 8)}…${account.id.slice(-6)}`
-                      : account.id}
-                    {connections.length > 1 && ` · ${connection.name}`}
+                    <PrivateText>
+                      {account.id.length > 18
+                        ? `${account.id.slice(0, 8)}…${account.id.slice(-6)}`
+                        : account.id}
+                    </PrivateText>
+                    {connections.length > 1 && (
+                      <PrivateText>{` · ${connection.name}`}</PrivateText>
+                    )}
                   </span>
                 </div>
               </TableCell>
@@ -103,7 +112,7 @@ export function AccountsTable({
                                 ? "warning"
                                 : "success"
                           }
-                          aria-label={`${account.name} ${quota.label} remaining`}
+                          aria-label={`${privacy ? "Account" : account.name} ${quota.label} remaining`}
                         />
                         {quota.resetsAt && (
                           <span
@@ -122,16 +131,19 @@ export function AccountsTable({
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  aria-label={`Open provider for ${account.email || account.name}`}
+                  aria-label={
+                    privacy
+                      ? "Open account provider"
+                      : `Open provider for ${account.email || account.name}`
+                  }
                   title="Open provider dashboard"
                   nativeButton={false}
                   render={
                     <a
                       href={
-                        connection.url ||
-                        (connection.provider === "codex"
+                        connection.provider === "codex"
                           ? "https://chatgpt.com"
-                          : "https://claude.ai")
+                          : "https://claude.ai"
                       }
                       target="_blank"
                       rel="noreferrer"

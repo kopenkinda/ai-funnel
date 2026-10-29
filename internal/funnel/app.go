@@ -157,6 +157,31 @@ func (a *App) dashboard(c *gin.Context) {
 		c.JSON(200, gin.H{"authenticated": false})
 		return
 	}
+	if p == "hub-token" && m == "POST" {
+		value := "sk-hub-" + token()
+		if !a.save(c, func(d *diskState) error { d.Settings.HubTokenHash = digest(value); return nil }) {
+			return
+		}
+		c.JSON(201, gin.H{"token": value})
+		return
+	}
+	if p == "settings" && m == "PATCH" {
+		var b struct {
+			AutoUseResets bool `json:"autoUseResets"`
+		}
+		if !decode(c, &b) {
+			return
+		}
+		if !a.save(c, func(d *diskState) error { d.Settings.AutoUseResets = b.AutoUseResets; return nil }) {
+			return
+		}
+		c.JSON(200, gin.H{"autoUseResets": b.AutoUseResets})
+		return
+	}
+	if p == "requests" && m == "GET" {
+		a.requestLogs(c)
+		return
+	}
 	if p == "state" && m == "GET" {
 		a.state(c)
 		return
@@ -222,32 +247,13 @@ func (a *App) dashboard(c *gin.Context) {
 		if !decode(c, &b) {
 			return
 		}
-		if !contains([]string{"codex", "claude", "zen", "go"}, b.Provider) || strings.TrimSpace(b.Name) == "" || len(b.Name) > 80 {
+		if !contains([]string{"codex", "claude"}, b.Provider) || strings.TrimSpace(b.Name) == "" || len(b.Name) > 80 {
 			fail(c, 400, "Supply a provider and connection name.")
 			return
 		}
 		b.ID = b.Provider
 		b.Enabled = true
 		b.CreatedAt = now()
-		if b.Provider == "zen" || b.Provider == "go" {
-			b.ID = token()[:24]
-			if b.APIKey == "" {
-				fail(c, 400, "Add your OpenCode API key.")
-				return
-			}
-			b.URL = "https://opencode.ai/inference"
-			if b.Provider == "go" {
-				b.URL += "/go"
-			}
-			var e error
-			if b.Models, e = openCodeModels(c.Request.Context(), b); e != nil {
-				fail(c, 400, "OpenCode model discovery failed.")
-				return
-			}
-		} else {
-			b.URL = ""
-			b.APIKey = ""
-		}
 		if existing, ok := a.store.read().Connections[b.ID]; ok {
 			c.JSON(200, a.publicConnection(existing))
 			return
@@ -273,27 +279,7 @@ func (a *App) dashboard(c *gin.Context) {
 			return
 		}
 		if len(parts) == 3 && parts[2] == "sync" && m == "POST" {
-			if conn.Provider == "zen" || conn.Provider == "go" {
-				models, e := openCodeModels(c.Request.Context(), conn)
-				if e != nil {
-					fail(c, 502, "OpenCode model discovery failed.")
-					return
-				}
-				if !a.save(c, func(d *diskState) error {
-					v, ok := d.Connections[conn.ID]
-					if !ok {
-						return fmt.Errorf("connection removed")
-					}
-					v.Models = models
-					d.Connections[conn.ID] = v
-					conn = v
-					return nil
-				}) {
-					return
-				}
-			} else {
-				a.refresh(c.Request.Context(), conn)
-			}
+			a.refresh(c.Request.Context(), conn)
 			c.JSON(200, a.publicConnection(conn))
 			return
 		}
@@ -433,7 +419,7 @@ func (a *App) state(c *gin.Context) {
 	for i, v := range logs {
 		reverse[len(logs)-1-i] = v
 	}
-	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL})
+	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL, "daily": d.Daily, "hourly": d.Hourly, "trackingAt": d.TrackingAt, "pricing": gin.H{"asOf": "2026-10-29", "openai": openAIPrices, "claude": claudePrices}, "settings": gin.H{"autoUseResets": d.Settings.AutoUseResets, "hasHubKey": d.Settings.HubTokenHash != ""}})
 }
 func (a *App) createKey(c *gin.Context) {
 	var b struct {
@@ -467,12 +453,7 @@ func (a *App) createKey(c *gin.Context) {
 		}
 		seen[g.ConnectionID] = true
 		for _, id := range g.AccountIDs {
-			if conn.Provider == "zen" || conn.Provider == "go" {
-				if id != conn.ID {
-					fail(c, 400, "Account not found.")
-					return
-				}
-			} else if auth, ok := a.core.GetByID(id); !ok || auth.Provider != conn.Provider {
+			if auth, ok := a.core.GetByID(id); !ok || auth.Provider != conn.Provider {
 				fail(c, 400, "Account not found in this provider.")
 				return
 			}

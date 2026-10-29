@@ -6,13 +6,13 @@ The Go integration test boots the real embedded SDK with isolated encrypted stat
 
 The Oxlint CLI tests check that the custom punctuation rule loads and rejects literal em dashes in comments, strings, templates, and JSX.
 
-A focused storage test checks that the SDK's initial OAuth token-storage object survives an encrypted round trip, including its refresh token. OpenCode forwarding checks preserve the native API path, session header, and SSE response while replacing device credentials and stripping cookies.
+A focused storage test checks that the SDK's initial OAuth token-storage object survives an encrypted round trip, including its refresh token.
 
 Credential-import tests cover native Codex auth.json, Codex JWT identity extraction, flat CLIProxyAPI JSON, Claude Code credential JSON, and pasted Claude setup tokens. The embedded test checks immediate model activation and inference with a controlled executor, encrypted refresh-token persistence, re-import identity and pause preservation, and wrong-provider rejection. No live credential file is used.
 
 Playwright checks dashboard login, account-source choices, invalid-file feedback, Codex auth.json upload into the real backend, additional account access, key creation, reload persistence, and the narrow login layout. A third check covers model-scoped usage, hidden unavailable windows, exhausted allowances, and the banked-reset hover details. The quota request after its fixture import is intercepted. It does not automate a real provider login.
 
-Local build, lint, formatting, Go tests with the race detector, Oxlint tests, source secret scanning, and all three Playwright checks passed. Focused quota tests cover Claude's newer scoped limits with null model IDs, legacy fields, Codex weekly-only accounts, additional pools, relative reset times, and banked-reset counts.
+Local build, lint, formatting, Go tests with the race detector, Oxlint tests, source secret scanning, and all four Playwright checks passed. Focused quota tests cover Claude's newer scoped limits with null model IDs, legacy fields, Codex weekly-only accounts, additional pools, relative reset times, and banked-reset counts.
 
 The full multi-stage Docker build failed twice during dependency downloads with unexpected EOF errors. A Linux binary compiled locally was checked in the same runtime stage, which started as one Go process and preserved encrypted state after restart. The full Dockerfile dependency-install stages remain unverified in this environment.
 
@@ -22,6 +22,18 @@ On 29 October 2026, the installed Claude Code 2.1.311 client sent `Hi` for every
 
 All 14 current model IDs returned a greeting: Fable 5 and 5.1; Haiku 4.5 and 5.5; Opus 4.5, 4.6, 4.7, 4.8, 5, and 5.5; Sonnet 4.5, 4.6, 5, and 5.5. Two legacy requests, Opus 4 and 4.1, were remapped by Claude Code to Opus 5.5 before reaching the proxy. Three legacy IDs failed: `claude-3-5-haiku-20241022`, `claude-3-7-sonnet-20250219`, and `claude-sonnet-4-20250514`. The proxy returned 503 with the upstream model-not-found error retained in the SDK's cooldown state. These five legacy IDs remain in the SDK model catalog; they are [retired by Anthropic](https://platform.claude.com/docs/en/about-claude/model-deprecations). This is not a claim that all advertised IDs work unchanged.
 
-Browser-based OAuth completion, real credential rotation, OpenCode credentials, and tailnet deployment still need operational verification. The old codex-lb verification does not establish compatibility for this new backend.
+Browser-based OAuth completion, real credential rotation, and tailnet deployment still need operational verification. The old codex-lb verification does not establish compatibility for this new backend.
 
-The initial transport is HTTP/SSE. Clients must disable Codex WebSockets. Unknown quotas remain unknown; a failed refresh preserves the last snapshot and timestamp. OpenCode balance/reset reporting is not implemented.
+Codex supports HTTP/SSE and WebSockets. Claude Code uses native Messages HTTP/SSE. Unknown quotas remain unknown; a failed refresh preserves the last snapshot and timestamp.
+
+The usage hub was checked against T3 Code's installed client contract. Tests cover its inventory schema, usage-call envelope, rejection of arbitrary URLs and isolation from dashboard administration. Reset scheduling tests use a controlled provider and verify the opt-in default, five-minute expiry window, retry throttling, deterministic redemption IDs and restart deduplication. No live reset was consumed during verification.
+
+On 29 October 2026, Codex CLI 0.165.0 returned a greeting through downstream and upstream WebSockets. A native Codex app-server session then completed two turns on the same thread and recalled a word from the first turn. Claude Code 2.1.311 returned a greeting from Sonnet 5.5 through native SSE. The proxy recorded canonical token splits, timings and price estimates for both harnesses. Temporary client keys were deleted after the checks.
+
+Controlled WebSocket tests cover repeated turns, per-turn daily caps and account-assignment changes. Accounting tests cover overlapping OpenAI cache/reasoning counts, independent Claude cache counts, duplicate SDK records, unknown prices and cache-write cost ranges.
+
+The fourth Playwright check covers summary token buckets, all six graph periods and their token/cost totals, graph hover details, persisted auto-reset settings, hub-key generation, request search and details, email blur and narrow layout. Storage tests check that history older than 90 days survives new usage and that upgrading existing hourly history neither loses nor duplicates requests on restart. Live hourly totals matched the daily total after upgrade. Headless desktop and mobile screenshots were inspected. Automatic redemption against a real expiring credit remains untested.
+
+Compression checks cover gzip/zstd request decoding, malformed and oversized expanded bodies, model restrictions after decoding, gzip/zstd SSE completion, and permessage-deflate negotiation. A delayed chunked upload protects against committing a status before the SDK finishes reading a request. The Claude upstream gzip wrapper is tested with replay and the original selected transport.
+
+On 29 October 2026, the unmodified Claude Code 2.1.311 harness returned a greeting through a temporary, locally trusted TLS test proxy. It sent a 2,855-byte gzip request and decoded a 627-byte zstd response stream through ai-funnel. Its official-host URL and gzip flag were confined to that test process. Codex 0.165.0 returned a greeting through HTTP with its native request compressed by a test transport from 56,735 to 19,787 bytes using zstd. The custom-provider Codex client itself sent identity encoding. A separate native Codex WebSocket greeting also passed. User Codex config and T3 settings hashes were unchanged, and temporary keys, certificates and configurations were removed.

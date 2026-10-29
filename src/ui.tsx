@@ -6,6 +6,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Provider } from "./types.ts";
+import { PrivateText } from "./privacy.tsx";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -24,7 +25,6 @@ export function ProviderIcon({
   provider: Provider;
   small?: boolean;
 }) {
-  const logo = provider === "zen" || provider === "go" ? "opencode" : provider;
   return (
     <span
       aria-hidden="true"
@@ -33,7 +33,7 @@ export function ProviderIcon({
         small ? "size-5" : "size-7",
       )}
     >
-      {logo === "claude" ? (
+      {provider === "claude" ? (
         <img
           src="/providers/claude.svg"
           alt=""
@@ -42,12 +42,12 @@ export function ProviderIcon({
       ) : (
         <>
           <img
-            src={`/providers/${logo}-light.svg`}
+            src={`/providers/${provider}-light.svg`}
             alt=""
             className="size-full object-contain dark:hidden"
           />
           <img
-            src={`/providers/${logo}-dark.svg`}
+            src={`/providers/${provider}-dark.svg`}
             alt=""
             className="hidden size-full object-contain dark:block"
           />
@@ -123,7 +123,9 @@ export function Dialog({
     >
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader className="pr-8">
-          <DialogTitle>{title}</DialogTitle>
+          <DialogTitle>
+            <PrivateText>{title}</PrivateText>
+          </DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
         {children}

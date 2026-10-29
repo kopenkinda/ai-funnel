@@ -1,10 +1,8 @@
-export type Provider = "codex" | "claude" | "zen" | "go";
-export const providers: Provider[] = ["codex", "claude", "zen", "go"];
+export type Provider = "codex" | "claude";
+export const providers: Provider[] = ["codex", "claude"];
 export const providerNames: Record<Provider, string> = {
   codex: "Codex",
   claude: "Claude",
-  zen: "OpenCode Zen",
-  go: "OpenCode Go",
 };
 export interface Quota {
   label: string;
@@ -19,13 +17,23 @@ export interface Account {
   status: string;
   quotas: Quota[];
   quotaError?: string;
-  resetCredits?: { available: number; applicable: number | null };
+  resetCredits?: {
+    available: number;
+    applicable: number | null;
+    checkedAt?: string;
+    error?: string;
+    items?: {
+      id: string;
+      status: string;
+      expires_at: string;
+      attempt?: { at: string; result: string; error?: string };
+    }[];
+  };
 }
 export interface PublicConnection {
   id: string;
   provider: Provider;
   name: string;
-  url: string;
   enabled: boolean;
   accounts: Account[];
   models: string[];
@@ -58,7 +66,55 @@ export interface RequestLog {
   at: string;
   connectionId: string;
   keyId: string;
+  keyName?: string;
   model: string | null;
   status: number;
   durationMs: number;
+  accountId?: string;
+  accountName?: string;
+  plan?: string;
+  provider?: string;
+  transport?: string;
+  upstreamTransport?: string;
+  ttftMs?: number;
+  tokens?: Tokens;
+  cost?: Cost;
+  reasoning?: string;
+  errorCode?: string;
+}
+export interface Tokens {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+  reasoning: number;
+  unclassified: number;
+  total: number;
+}
+export interface Cost {
+  min: number;
+  max: number;
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+  reasoning: number;
+  priced: boolean;
+  model?: string;
+  tier?: string;
+  version?: string;
+  note?: string;
+}
+export interface DailyUsage {
+  day: string;
+  hour?: string;
+  provider: string;
+  tokens: Tokens;
+  cost: Cost;
+  requests: number;
+  unpriced: number;
+}
+export interface Settings {
+  autoUseResets: boolean;
+  hasHubKey: boolean;
 }
