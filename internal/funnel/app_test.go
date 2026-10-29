@@ -117,7 +117,7 @@ func TestEmbeddedService(t *testing.T) {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
-	app, svc, e := NewRuntime(store, "127.0.0.1", port, "", t.TempDir())
+	app, svc, e := NewRuntime(store, "127.0.0.1", port, "", t.TempDir(), "https://alternate.example")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -203,6 +203,18 @@ func TestEmbeddedService(t *testing.T) {
 		response.Body.Close()
 		if response.StatusCode != 403 {
 			t.Fatal(response.StatusCode)
+		}
+		for _, origin := range []string{root, "https://alternate.example"} {
+			r, _ := http.NewRequest("POST", root+"/api/session", strings.NewReader(fmt.Sprintf(`{"token":%q}`, admin)))
+			r.Header.Set("Origin", origin)
+			response, err := client.Do(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+			if response.StatusCode != 200 {
+				t.Fatalf("configured dashboard origin %s rejected: %d", origin, response.StatusCode)
+			}
 		}
 	})
 	t.Run("T3 usage hub is scoped and has no credential export", func(t *testing.T) {

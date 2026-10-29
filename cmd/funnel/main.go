@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -48,7 +49,7 @@ func main() {
 	if e != nil || port < 1 || port > 65535 {
 		log.Fatal("Invalid PORT")
 	}
-	app, service, e := funnel.NewRuntime(store, env("HOST", "127.0.0.1"), port, os.Getenv("PUBLIC_URL"), env("DIST_DIR", "dist"))
+	app, service, e := funnel.NewRuntime(store, env("HOST", "127.0.0.1"), port, os.Getenv("PUBLIC_URL"), env("DIST_DIR", "dist"), strings.Split(os.Getenv("DASHBOARD_ORIGINS"), ",")...)
 	if e != nil {
 		log.Fatal(e)
 	}

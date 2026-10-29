@@ -1,4 +1,4 @@
-# Private deployment with Coolify
+# Deployment with Coolify
 
 Use a GitHub App application in the target Coolify project and environment:
 
@@ -7,14 +7,16 @@ Use a GitHub App application in the target Coolify project and environment:
 - Container port: `4310`.
 - Host port mapping: `127.0.0.1:4310:4310`.
 - Persistent volume mounted at `/app/data`.
-- Runtime `PUBLIC_URL`: the HTTPS URL served by Tailscale.
+- Runtime `PUBLIC_URL`: the canonical HTTPS dashboard URL.
 - HTTP health check: `/healthz` on port `4310`.
 - Runtime limits: 1 GB memory and two CPUs.
-- Public domains and preview deployments disabled.
+- Preview deployments disabled.
 
 Coolify's API validator does not accept a host address in port mappings. Configure the application mapping directly when provisioning, then verify that the generated Compose file and running container bind only to `127.0.0.1`. Do not substitute `4310:4310`, which binds every host interface.
 
-On the server, configure Tailscale without accepting DNS changes, subnet routes, or an exit node. Use Tailscale Serve for private HTTPS:
+## Private HTTPS
+
+Leave the application's public domain empty. On the server, configure Tailscale without accepting DNS changes, subnet routes, or an exit node. Use Tailscale Serve for private HTTPS:
 
 ```sh
 tailscale serve --bg --https=443 http://127.0.0.1:4310
@@ -24,6 +26,14 @@ tailscale serve status
 Keep Tailscale Funnel disabled. The proxy serves only the tailnet and does not change the existing public reverse proxy. Disable device key expiry in the Tailscale admin console for unattended operation.
 
 If the server also advertises as an exit node, persist IPv4 and IPv6 forwarding in `/etc/sysctl.d/99-tailscale.conf` and apply that file with `sysctl -p`. Both `net.ipv4.ip_forward` and `net.ipv6.conf.all.forwarding` must be `1`. Exit-node approval is separate from the app's private HTTPS configuration.
+
+## Public HTTPS
+
+Point the hostname at the server and add its `https://` URL to the application's Coolify domains. Coolify's reverse proxy routes to container port 4310 and issues and renews the certificate through its existing Let's Encrypt resolver. Keep the host port mapping on loopback.
+
+Set `PUBLIC_URL` to the public HTTPS origin. To retain dashboard access through Tailscale too, set `DASHBOARD_ORIGINS` to the private HTTPS origin. This optional comma-separated list adds exact allowed origins for dashboard mutations and browser WebSockets. Other browser origins remain blocked. Existing native clients can continue using the tailnet endpoint.
+
+The login page and static assets are public. Dashboard operations require a dashboard session or dashboard key; provider calls require a granted client key. The scoped usage hub requires its management key. Raw CLIProxyAPI management routes remain blocked.
 
 ## State and updates
 

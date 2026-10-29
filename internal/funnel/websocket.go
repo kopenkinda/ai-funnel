@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 
 	"github.com/gin-gonic/gin"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
@@ -41,16 +40,9 @@ func (p *websocketAccess) Authenticate(ctx context.Context, r *http.Request) (*s
 	return &sdkaccess.Result{Provider: p.Identifier(), Principal: policy.principal}, nil
 }
 func (a *App) websocket(c *gin.Context, conn Connection, grant Grant, keyID string) {
-	if origin := c.Request.Header.Get("Origin"); origin != "" {
-		expected := a.publicURL
-		if expected == "" {
-			expected = "http://" + c.Request.Host
-		}
-		u, err := url.Parse(expected)
-		if err != nil || origin != u.Scheme+"://"+u.Host {
-			fail(c, 403, "WebSocket origin not allowed.")
-			return
-		}
+	if !a.allowedOrigin(c.Request) {
+		fail(c, 403, "WebSocket origin not allowed.")
+		return
 	}
 	principal := a.usageIdentity(keyID, conn.ID, "WS", token()[:24])
 	policy := websocketPolicy{conn, grant, principal}

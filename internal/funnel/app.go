@@ -84,18 +84,31 @@ func (a *App) save(c *gin.Context, fn func(*diskState) error) bool {
 	}
 	return true
 }
+func (a *App) allowedOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	for _, base := range a.origins {
+		base = strings.TrimSpace(base)
+		if base == "" {
+			if a.publicURL != "" {
+				continue
+			}
+			base = "http://" + r.Host
+		}
+		u, err := url.Parse(base)
+		if err == nil && origin == u.Scheme+"://"+u.Host {
+			return true
+		}
+	}
+	return false
+}
 func (a *App) dashboard(c *gin.Context) {
 	p, m := strings.TrimPrefix(c.Request.URL.Path, "/api/"), c.Request.Method
-	if origin := c.Request.Header.Get("Origin"); origin != "" && m != "GET" && m != "HEAD" {
-		expected := a.publicURL
-		if expected == "" {
-			expected = "http://" + c.Request.Host
-		}
-		u, e := url.Parse(expected)
-		if e != nil || origin != u.Scheme+"://"+u.Host {
-			fail(c, 403, "Use the dashboard from its configured address.")
-			return
-		}
+	if m != "GET" && m != "HEAD" && !a.allowedOrigin(c.Request) {
+		fail(c, 403, "Use the dashboard from its configured address.")
+		return
 	}
 	if p == "session" && m == "GET" {
 		d := a.store.read()

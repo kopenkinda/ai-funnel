@@ -67,6 +67,7 @@ type App struct {
 	engine     *gin.Engine
 	management string
 	publicURL  string
+	origins    []string
 	dist       string
 	responses  *openai.OpenAIResponsesAPIHandler
 	claude     *claude.ClaudeCodeAPIHandler
@@ -75,7 +76,7 @@ type App struct {
 	gate       chan struct{}
 }
 
-func NewRuntime(store *Store, host string, port int, publicURL, dist string) (*App, *cliproxy.Service, error) {
+func NewRuntime(store *Store, host string, port int, publicURL, dist string, additionalOrigins ...string) (*App, *cliproxy.Service, error) {
 	gin.SetMode(gin.ReleaseMode)
 	cfg, e := config.ParseConfigBytes([]byte("host: 127.0.0.1\nport: 4310\nrequest-log: false\nlogging-to-file: false\nremote-management:\n  disable-control-panel: true\n"))
 	if e != nil {
@@ -97,6 +98,7 @@ func NewRuntime(store *Store, host string, port int, publicURL, dist string) (*A
 	sdkauth.RegisterTokenStore(store)
 	manager := core.NewManager(store, &selector{}, nil)
 	a := &App{usageOwner: token(), store: store, core: manager, management: management, publicURL: strings.TrimRight(publicURL, "/"), dist: dist, failures: map[string][]int64{}, gate: make(chan struct{}, 1)}
+	a.origins = append([]string{a.publicURL}, additionalOrigins...)
 	sdkusage.RegisterNamedPlugin("ai-funnel:"+store.dir, a)
 	// OAuth callback files stay separate from the encrypted account store.
 	if e = os.MkdirAll(cfg.AuthDir, 0700); e != nil {

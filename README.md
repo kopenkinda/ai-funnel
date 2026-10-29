@@ -83,7 +83,7 @@ The app enforces provider, account, model, expiry, pause, and daily request poli
 
 Back up the whole data directory while the service is stopped. Losing the master key makes the stored state unreadable. Activity retains 10,000 request metadata records with 50 per page. Lifetime cost and token totals per API key persist independently of those logs. Upgrading backfills the retained request history; older evicted logs cannot be attributed to keys retroactively. Prompts and response bodies are not stored in activity. Dashboard sessions use HTTP-only cookies, and mutations reject foreign origins.
 
-Set `PUBLIC_URL` to the exact HTTPS origin provided by Tailscale Serve. Keep the service bound to loopback and forward your private tailnet hostname to port 4310. A container also runs a single Go process:
+Set `PUBLIC_URL` to the canonical HTTPS origin. For private access, keep the service bound to loopback and forward your Tailscale Serve hostname to port 4310. Public HTTPS through Coolify can run alongside it; set `DASHBOARD_ORIGINS` to the private origin to retain both dashboards. See [deployment configuration](docs/deployment.md). A container also runs a single Go process:
 
 ```sh
 docker compose up --build -d
