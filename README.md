@@ -4,6 +4,8 @@ One personal service for Codex and Claude subscriptions. The Go backend embeds [
 
 ## Run
 
+For private hosting, see [the Coolify and Tailscale deployment setup](docs/deployment.md).
+
 Build with Go 1.27.3+, Node 24+, and pnpm:
 
 ```sh

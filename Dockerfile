@@ -12,7 +12,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -o /ai-funnel ./cmd/funnel
+RUN CGO_ENABLED=0 GOMAXPROCS=2 go build -p 2 -trimpath -o /ai-funnel ./cmd/funnel
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* && useradd --uid 10001 --create-home funnel
