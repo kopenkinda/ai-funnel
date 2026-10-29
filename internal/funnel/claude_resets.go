@@ -118,7 +118,7 @@ func (a *App) claudeOrganization(ctx context.Context, auth *core.Auth) (string, 
 // A grant can contain several resets. Keep an unanswered request's ID even if
 // discovery already reports a lower count. Start another only after its result
 // is known and the provider confirms the previous reset was deducted.
-func (a *App) consumeClaudeResetLocked(ctx context.Context, auth *core.Auth, credit ResetCredit) error {
+func (a *App) consumeClaudeResetLocked(ctx context.Context, auth *core.Auth, credit ResetCredit, manualRequestID string) error {
 	if !claudeGrantID.MatchString(credit.ID) || credit.count() <= 0 {
 		return fmt.Errorf("invalid Claude reset grant")
 	}
@@ -129,7 +129,10 @@ func (a *App) consumeClaudeResetLocked(ctx context.Context, auth *core.Auth, cre
 	}
 	attempt := ResetAttempt{At: now(), RequestID: previous.RequestID, Remaining: previous.Remaining}
 	if attempt.RequestID == "" || previous.Result != "" {
-		attempt.RequestID = uuid.NewString()
+		attempt.RequestID = manualRequestID
+		if attempt.RequestID == "" {
+			attempt.RequestID = uuid.NewString()
+		}
 		attempt.Remaining = credit.count()
 	}
 	save := func() error {
@@ -145,7 +148,7 @@ func (a *App) consumeClaudeResetLocked(ctx context.Context, auth *core.Auth, cre
 		return err
 	}
 	org, err := a.claudeOrganization(ctx, auth)
-	if err == nil && (ctx.Err() != nil || credit.ExpiresAt == nil || !credit.ExpiresAt.After(now()) || !a.store.read().Settings.AutoUseResets) {
+	if err == nil && (ctx.Err() != nil || (credit.ExpiresAt != nil && !credit.ExpiresAt.After(now())) || (manualRequestID == "" && (credit.ExpiresAt == nil || !a.store.read().Settings.AutoUseResets))) {
 		return nil
 	}
 	if err == nil {

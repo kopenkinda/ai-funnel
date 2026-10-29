@@ -72,7 +72,7 @@ func parseAccountImport(b accountImport) (*core.Auth, error) {
 			if b.Provider != "claude" {
 				return nil, fmt.Errorf("Select Claude to import this credential file.")
 			}
-			for from, to := range map[string]string{"accessToken": "access_token", "refreshToken": "refresh_token", "subscriptionType": "plan_type"} {
+			for from, to := range map[string]string{"accessToken": "access_token", "refreshToken": "refresh_token", "subscriptionType": "plan_type", "rateLimitTier": "rate_limit_tier"} {
 				source[to] = nested[from]
 			}
 			if ms, ok := nested["expiresAt"].(float64); ok && ms > 0 {
@@ -85,7 +85,7 @@ func parseAccountImport(b accountImport) (*core.Auth, error) {
 	}
 	// Never import routing overrides, arbitrary headers, paths, or runtime state.
 	metadata := map[string]any{"type": b.Provider}
-	for _, k := range []string{"access_token", "refresh_token", "id_token", "account_id", "email", "plan_type", "expired", "last_refresh", "account_uuid", "organization_uuid", "organization_name"} {
+	for _, k := range []string{"access_token", "refresh_token", "id_token", "account_id", "email", "plan_type", "rate_limit_tier", "expired", "last_refresh", "account_uuid", "organization_uuid", "organization_name"} {
 		if v := strings.TrimSpace(str(source[k])); v != "" {
 			metadata[k] = v
 		}

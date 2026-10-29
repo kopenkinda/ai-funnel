@@ -48,13 +48,17 @@ type DailyUsage struct {
 	Day      string `json:"day"`
 	Hour     string `json:"hour,omitempty"`
 	Provider string `json:"provider"`
+	UsageTotals
+}
+
+type UsageTotals struct {
 	Tokens   Tokens `json:"tokens"`
 	Cost     Cost   `json:"cost"`
 	Requests int    `json:"requests"`
 	Unpriced int    `json:"unpriced"`
 }
 
-func (v *DailyUsage) add(tokens Tokens, cost Cost) {
+func (v *UsageTotals) add(tokens Tokens, cost Cost) {
 	v.Requests++
 	v.Tokens.add(tokens)
 	v.Cost.Min += cost.Min
@@ -76,6 +80,15 @@ func (d *diskState) addHourly(at time.Time, provider string, tokens Tokens, cost
 	v.Day, v.Hour, v.Provider = at.UTC().Format("2006-01-02"), hour, provider
 	v.add(tokens, cost)
 	d.Hourly[k] = v
+}
+
+func (d *diskState) addKeyUsage(keyID string, tokens Tokens, cost Cost) {
+	if d.KeyUsage == nil {
+		d.KeyUsage = map[string]UsageTotals{}
+	}
+	v := d.KeyUsage[keyID]
+	v.add(tokens, cost)
+	d.KeyUsage[keyID] = v
 }
 
 // Only opaque internal identifiers enter the SDK's usage identity, never the
@@ -168,6 +181,7 @@ func (a *App) HandleUsage(_ context.Context, r sdkusage.Record) {
 		v.add(tokens, cost)
 		d.Daily[k] = v
 		d.addHourly(at, r.Provider, tokens, cost)
+		d.addKeyUsage(keyID, tokens, cost)
 		cutoff := now().AddDate(0, 0, -2).Format(time.RFC3339)
 		for k, v := range d.Hourly {
 			if v.Hour < cutoff {

@@ -271,6 +271,10 @@ func (a *App) dashboard(c *gin.Context) {
 		return
 	}
 	parts := strings.Split(p, "/")
+	if len(parts) == 3 && parts[0] == "accounts" && parts[2] == "reset" && m == "POST" {
+		a.resetAccount(c, parts[1])
+		return
+	}
 	if len(parts) >= 2 && parts[0] == "connections" {
 		d := a.store.read()
 		conn, ok := d.Connections[parts[1]]
@@ -369,16 +373,25 @@ func (a *App) dashboard(c *gin.Context) {
 			return
 		}
 		d := a.store.read()
-		k, ok := d.Keys[parts[1]]
+		_, ok := d.Keys[parts[1]]
 		if !ok {
 			fail(c, 404, "Key not found.")
 			return
 		}
 		if m == "DELETE" {
-			if !a.save(c, func(d *diskState) error { delete(d.Keys, k.ID); return nil }) {
+			if !a.save(c, func(d *diskState) error {
+				k := d.Keys[parts[1]]
+				if k.ArchivedAt == nil {
+					t := now()
+					k.ArchivedAt = &t
+				}
+				k.Enabled = false
+				d.Keys[k.ID] = k
+				return nil
+			}) {
 				return
 			}
-			c.JSON(200, gin.H{"deleted": true})
+			c.JSON(200, gin.H{"archived": true})
 			return
 		}
 	}
@@ -415,5 +428,5 @@ func (a *App) state(c *gin.Context) {
 	for i, v := range logs {
 		reverse[len(logs)-1-i] = v
 	}
-	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL, "daily": d.Daily, "hourly": d.Hourly, "trackingAt": d.TrackingAt, "pricing": gin.H{"asOf": "2026-10-29", "openai": openAIPrices, "claude": claudePrices}, "settings": gin.H{"autoUseResets": d.Settings.AutoUseResets, "hasHubKey": d.Settings.HubTokenHash != ""}})
+	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL, "daily": d.Daily, "hourly": d.Hourly, "keyUsage": d.KeyUsage, "trackingAt": d.TrackingAt, "pricing": gin.H{"asOf": "2026-10-29", "openai": openAIPrices, "claude": claudePrices}, "settings": gin.H{"autoUseResets": d.Settings.AutoUseResets, "hasHubKey": d.Settings.HubTokenHash != ""}})
 }

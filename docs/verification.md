@@ -45,3 +45,13 @@ The existing dashboard key unlocked the deployed app after the encrypted state t
 All 41 existing containers remained running without new unhealthy states, and the public codex-lb endpoint continued to return HTTP 200. Public connections to port 4310 failed, and the private hostname sent to the public reverse proxy followed its existing fallback redirect rather than reaching ai-funnel.
 
 Key editing checks cover provider additions/removals, account/model restrictions, rejected invalid edits, clearing caps and expiration, unchanged credentials and pause state, persistence, and WebSocket policy changes through the management endpoint. The editor browser check uses the provider model catalog, selects and removes models, saves and reopens an existing key, and verifies its original credential still works. Desktop and mobile layouts were inspected.
+
+Per-key lifetime accounting checks cover duplicate SDK records, in-flight completion after revocation, history backfill, restart persistence, and keeping totals after source logs are evicted. The key comparison browser check covers independent cost/token ordering, percentage bars, paused and unused keys, email privacy, uncertain cost ranges, unpriced requests, and desktop/mobile layouts.
+
+Key archive checks cover HTTP revocation, rejection on the next turn of an open WebSocket, retained identity and lifetime totals after restart, duplicate credential rejection, and restoration in a paused state. The browser check archives and restores an edited key, verifies its original credential, and checks the archived view on desktop and mobile.
+
+Dashboard routing checks cover login at a direct page URL, refresh on each page, navigation links, browser back and forward, and redirects from the root or unknown paths to usage.
+
+Account row checks cover inline plan multipliers, the free-plan icon, hidden healthy status, plain text exceptions, keyboard-accessible plan tooltips, unknown tiers, email privacy, and mobile overflow. Controlled provider checks verify Claude tier discovery and credential import without live account requests.
+
+Manual reset checks cover dashboard authentication, verified account credits, retry idempotency, paused connections, cooldown clearing, Claude grants with multiple uses or no expiry, and independence from automatic resets. Browser checks select the earliest unexpired credit, show its relative expiry, invoke both providers, and refresh the action afterward.

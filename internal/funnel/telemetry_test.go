@@ -18,7 +18,7 @@ func TestUsageAccountingAndDeduplication(t *testing.T) {
 	oldDay := now().AddDate(0, 0, -400).Format("2006-01-02")
 	_ = store.change(func(d *diskState) error {
 		d.Keys["key"] = Key{ID: "key"}
-		d.Daily = map[string]DailyUsage{oldDay: {Day: oldDay, Tokens: Tokens{Total: 50}, Requests: 1}}
+		d.Daily = map[string]DailyUsage{oldDay: {Day: oldDay, UsageTotals: UsageTotals{Tokens: Tokens{Total: 50}, Requests: 1}}}
 		return nil
 	})
 	a := &App{store: store, core: core.NewManager(store, nil, nil)}
@@ -46,12 +46,18 @@ func TestUsageAccountingAndDeduplication(t *testing.T) {
 	if d.Daily[now().Format("2006-01-02")+"|codex"].Requests != 1 {
 		t.Fatal("daily aggregate counted duplicate")
 	}
+	if usage := d.KeyUsage["key"]; usage.Requests != 1 || usage.Tokens.Total != 1100 || math.Abs(usage.Cost.Min-cost.Min) > 1e-10 {
+		t.Fatalf("per-key totals lost usage or counted duplicates: %+v", usage)
+	}
 	// Finishing an authorized request after its key was revoked must still count.
 	_ = store.change(func(d *diskState) error { delete(d.Keys, "key"); return nil })
 	r.RequestID = "after-revocation"
 	a.HandleUsage(context.Background(), r)
 	if len(store.read().Requests) != 2 {
 		t.Fatal("in-flight usage was lost after key revocation")
+	}
+	if usage := store.read().KeyUsage["key"]; usage.Requests != 2 || usage.Tokens.Total != 2200 {
+		t.Fatal("in-flight key usage was lost after key revocation")
 	}
 	foreign := &App{usageOwner: "another-runtime", store: store, core: a.core}
 	r.RequestID = "foreign"
@@ -85,10 +91,11 @@ func TestHourlyHistoryUpgrade(t *testing.T) {
 	at := now().Add(-time.Minute)
 	if err := store.change(func(d *diskState) error {
 		d.Hourly = nil // State written before hourly accounting existed.
+		d.KeyUsage = nil
 		d.Requests = []RequestLog{
-			{At: at, Provider: "codex", Tokens: &Tokens{Input: 100, Total: 100}, Cost: &Cost{Min: .1, Max: .1, Input: .1, Priced: true}},
-			{At: at.AddDate(0, 0, -3), Provider: "codex", Tokens: &Tokens{Total: 200}, Cost: &Cost{}},
-			{At: at, Provider: "codex"},
+			{At: at, Provider: "codex", KeyID: "key", Tokens: &Tokens{Input: 100, Total: 100}, Cost: &Cost{Min: .1, Max: .1, Input: .1, Priced: true}},
+			{At: at.AddDate(0, 0, -3), Provider: "codex", KeyID: "key", Tokens: &Tokens{Total: 200}, Cost: &Cost{}},
+			{At: at, Provider: "codex", KeyID: "key"},
 		}
 		return nil
 	}); err != nil {
@@ -103,6 +110,14 @@ func TestHourlyHistoryUpgrade(t *testing.T) {
 		key := at.UTC().Truncate(time.Hour).Format(time.RFC3339) + "|codex"
 		if len(hourly) != 1 || hourly[key].Tokens.Total != 100 || hourly[key].Requests != 1 || hourly[key].Cost.Min != .1 {
 			t.Fatalf("existing usage lost or duplicated on restart: %+v", hourly)
+		}
+		totals := store.read().KeyUsage["key"]
+		if totals.Requests != 2 || totals.Tokens.Total != 300 || totals.Cost.Min != .1 || totals.Unpriced != 1 {
+			t.Fatalf("key history lost or duplicated on restart: %+v", totals)
+		}
+		// Once backfilled, totals must survive the source logs being evicted.
+		if err := store.change(func(d *diskState) error { d.Requests = nil; return nil }); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

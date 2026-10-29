@@ -37,6 +37,10 @@ Start these accounts from scratch. There is no codex-lb migration or account imp
 
 Use the edit action under **API keys** to change a key's name, providers, accounts, models, request cap or expiration. The key value and usage history stay the same. Changes apply to subsequent requests and WebSocket turns.
 
+**Archive** revokes a key's access and keeps its settings and lifetime usage. Find it under **Archived** to restore it. Restored keys stay paused until enabled.
+
+Account rows show plan multipliers and exceptional statuses. **Use reset** redeems the displayed banked credit, with its expiry shown underneath. Manual use works independently of automatic resets for both Codex and Claude.
+
 Model access uses the same provider catalog as native model discovery. Keep **All models** enabled for unrestricted model access, including future models. Disable it to select models from the searchable picker. Selected models appear above the picker and can be removed individually.
 
 ## Usage and request logs
@@ -77,7 +81,7 @@ The app enforces provider, account, model, expiry, pause, and daily request poli
 
 `DATA_DIR/state.enc` contains AES-256-GCM encrypted credentials, account state, key policies, quota snapshots, sessions, and request metadata. `master.key` decrypts it. The SDK uses this encrypted store for login and token refresh; persistent plaintext credential files are not created. Temporary OAuth callback files are kept in the private `oauth-sessions` directory and consumed by the SDK. Files use owner-only permissions. One process can hold a data directory at a time.
 
-Back up the whole data directory while the service is stopped. Losing the master key makes the stored state unreadable. Activity retains 10,000 request metadata records with 50 per page. Prompts and response bodies are not stored in activity. Dashboard sessions use HTTP-only cookies, and mutations reject foreign origins.
+Back up the whole data directory while the service is stopped. Losing the master key makes the stored state unreadable. Activity retains 10,000 request metadata records with 50 per page. Lifetime cost and token totals per API key persist independently of those logs. Upgrading backfills the retained request history; older evicted logs cannot be attributed to keys retroactively. Prompts and response bodies are not stored in activity. Dashboard sessions use HTTP-only cookies, and mutations reject foreign origins.
 
 Set `PUBLIC_URL` to the exact HTTPS origin provided by Tailscale Serve. Keep the service bound to loopback and forward your private tailnet hostname to port 4310. A container also runs a single Go process:
 

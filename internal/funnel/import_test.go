@@ -13,7 +13,7 @@ func TestCredentialFormats(t *testing.T) {
 	for _, input := range []accountImport{
 		{Provider: "codex", Token: access},
 		{Provider: "codex", Auth: json.RawMessage(`{"access_token":"fixture-flat-access-token","refresh_token":"fixture-flat-refresh-token","type":"codex","account_id":"flat-account"}`)},
-		{Provider: "claude", Auth: json.RawMessage(`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-fixture-file-token","refreshToken":"fixture-file-refresh-token","expiresAt":2000000000000,"subscriptionType":"max"}}`)},
+		{Provider: "claude", Auth: json.RawMessage(`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-fixture-file-token","refreshToken":"fixture-file-refresh-token","expiresAt":2000000000000,"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}`)},
 	} {
 		auth, e := parseAccountImport(input)
 		if e != nil || auth == nil || str(auth.Metadata["access_token"]) == "" {
@@ -24,6 +24,9 @@ func TestCredentialFormats(t *testing.T) {
 		}
 		if input.Provider == "claude" && (str(auth.Metadata["refresh_token"]) != "fixture-file-refresh-token" || str(auth.Metadata["expired"]) == "") {
 			t.Fatal("Claude refresh credentials were lost")
+		}
+		if input.Provider == "claude" && str(auth.Metadata["rate_limit_tier"]) != "default_claude_max_20x" {
+			t.Fatal("Claude Max multiplier was lost on import")
 		}
 	}
 	for _, raw := range []string{`null`, `[]`, `{"tokens":{}}`, `{"OPENAI_API_KEY":"fixture-paid-key"}`} {

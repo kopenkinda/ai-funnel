@@ -29,6 +29,7 @@ type Account struct {
 	Name         string        `json:"name"`
 	Email        string        `json:"email"`
 	Plan         string        `json:"plan"`
+	PlanTier     string        `json:"planTier,omitempty"`
 	Status       string        `json:"status"`
 	Quotas       []Quota       `json:"quotas"`
 	QuotaError   string        `json:"quotaError,omitempty"`
@@ -42,6 +43,8 @@ type ResetCredits struct {
 	Applicable *int          `json:"applicable"`
 }
 type Snapshot struct {
+	Plan         string        `json:"plan,omitempty"`
+	PlanTier     string        `json:"planTier,omitempty"`
 	Quotas       []Quota       `json:"quotas"`
 	At           time.Time     `json:"at"`
 	Error        string        `json:"error"`
@@ -103,9 +106,17 @@ func (a *App) publicConnection(conn Connection) gin.H {
 		if name == "" {
 			name = auth.ID
 		}
-		plan := str(auth.Metadata["plan_type"])
+		snap := d.Snapshots[auth.ID]
+		plan := snap.Plan
+		if plan == "" {
+			plan = str(auth.Metadata["plan_type"])
+		}
 		if plan == "" {
 			plan = "Subscription"
+		}
+		tier := snap.PlanTier
+		if tier == "" && snap.Plan == "" {
+			tier = str(auth.Metadata["rate_limit_tier"])
 		}
 		status := "active"
 		if auth.Disabled {
@@ -113,7 +124,6 @@ func (a *App) publicConnection(conn Connection) gin.H {
 		} else if auth.Unavailable {
 			status = "rate_limited"
 		}
-		snap := d.Snapshots[auth.ID]
 		quotas := snap.Quotas
 		if quotas == nil {
 			quotas = []Quota{}
@@ -153,7 +163,7 @@ func (a *App) publicConnection(conn Connection) gin.H {
 				}
 			}
 		}
-		accounts = append(accounts, Account{ID: auth.ID, Name: name, Email: email, Plan: plan, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits})
+		accounts = append(accounts, Account{ID: auth.ID, Name: name, Email: email, Plan: plan, PlanTier: tier, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits})
 
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
@@ -186,7 +196,8 @@ func (a *App) refresh(ctx context.Context, conn Connection) {
 		if auth.Provider != conn.Provider {
 			continue
 		}
-		snap := Snapshot{At: now(), Quotas: []Quota{}}
+		previous := a.store.read().Snapshots[auth.ID]
+		snap := Snapshot{At: now(), Quotas: []Quota{}, Plan: previous.Plan, PlanTier: previous.PlanTier}
 		target := "https://chatgpt.com/backend-api/wham/usage"
 		if conn.Provider == "claude" {
 			target = claudeUsageURL
@@ -206,6 +217,11 @@ func (a *App) refresh(ctx context.Context, conn Connection) {
 			}
 			response.Body.Close()
 			if e == nil {
+				if conn.Provider == "codex" {
+					if plan := str(data["plan_type"]); plan != "" {
+						snap.Plan = plan
+					}
+				}
 				snap.Quotas, snap.ResetCredits = parseUsage(conn.Provider, data, snap.At)
 				if conn.Provider == "claude" {
 					var resetErr error
@@ -226,6 +242,23 @@ func (a *App) refresh(ctx context.Context, conn Connection) {
 		}
 		if conn.Provider == "codex" && !auth.Disabled {
 			snap.ResetCredits = a.fetchCredits(ctx, auth, snap.ResetCredits)
+		}
+		if conn.Provider == "claude" && !auth.Disabled {
+			status, body, err := a.accountRequest(ctx, auth, "GET", "https://api.anthropic.com/api/oauth/profile", nil)
+			var profile struct {
+				Organization struct {
+					Type string `json:"organization_type"`
+					Tier string `json:"rate_limit_tier"`
+				} `json:"organization"`
+			}
+			if err == nil && status == 200 && json.Unmarshal(body, &profile) == nil {
+				if profile.Organization.Type != "" {
+					snap.Plan = profile.Organization.Type
+					snap.PlanTier = profile.Organization.Tier
+				} else if profile.Organization.Tier != "" {
+					snap.PlanTier = profile.Organization.Tier
+				}
+			}
 		}
 		_ = a.store.change(func(d *diskState) error { d.Snapshots[auth.ID] = snap; return nil })
 	}
@@ -380,9 +413,9 @@ func (a *App) authorizeProvider(provider, id, value, model string, reserve bool,
 	authProviders := a.accountProviders()
 	err := a.store.change(func(d *diskState) error {
 		k, ok := d.Keys[keyID]
-		if !ok || !k.Enabled || (k.ExpiresAt != nil && !k.ExpiresAt.After(now())) {
+		if !ok || k.ArchivedAt != nil || !k.Enabled || (k.ExpiresAt != nil && !k.ExpiresAt.After(now())) {
 			status = 401
-			message = "This client key is paused, removed, or expired."
+			message = "This client key is paused, archived, or expired."
 			return fmt.Errorf("denied")
 		}
 		var exists bool

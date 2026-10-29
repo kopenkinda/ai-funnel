@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -103,5 +105,86 @@ func TestExpiringResetScheduleAndRestart(t *testing.T) {
 	}
 	if len(x.requests) != 2 {
 		t.Fatal("expired or distant credit was consumed")
+	}
+}
+
+func TestManualAccountResets(t *testing.T) {
+	for _, provider := range []string{"codex", "claude"} {
+		t.Run(provider, func(t *testing.T) {
+			var a *App
+			var requests func() int
+			var claude *claudeResetExecutor
+			id, creditID := "account", "credit"
+			if provider == "claude" {
+				a, claude = claudeResetApp(t)
+				claude.grant["ends_at"] = nil // Manual use also supports credits without expiry.
+				id, creditID = "claude-account", "grant"
+				requests = func() int { return len(claude.requests) }
+			} else {
+				s, err := NewStore(t.TempDir(), "manual-reset-admin")
+				if err != nil {
+					t.Fatal(err)
+				}
+				m := core.NewManager(s, nil, nil)
+				if _, err := m.Register(context.Background(), &core.Auth{ID: id, Provider: provider, Unavailable: true}); err != nil {
+					t.Fatal(err)
+				}
+				expiry := now().Add(time.Hour)
+				x := &resetExecutor{credit: ResetCredit{ID: creditID, Status: "available", ResetType: "codex_rate_limits", ExpiresAt: &expiry}, result: "reset"}
+				m.RegisterExecutor(x)
+				a = &App{store: s, core: m}
+				if err := s.change(func(d *diskState) error {
+					d.Connections[provider] = Connection{ID: provider, Provider: provider, Enabled: true}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				requests = func() int { return len(x.requests) }
+			}
+			router := gin.New()
+			router.Any("/api/*path", a.dashboard)
+			call := func(admin, credit, requestID string) *httptest.ResponseRecorder {
+				t.Helper()
+				body, _ := json.Marshal(map[string]string{"creditId": credit, "requestId": requestID})
+				r := httptest.NewRequest("POST", "/api/accounts/"+id+"/reset", strings.NewReader(string(body)))
+				r.Header.Set("Authorization", "Bearer "+admin)
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, r)
+				return w
+			}
+			requestID := "fd82f108-3543-4448-ad1b-1ee1a0e23635"
+			if w := call("", creditID, requestID); w.Code != 401 || requests() != 0 {
+				t.Fatal("manual reset bypassed dashboard auth", w.Code)
+			}
+			if w := call(a.store.Admin, "unrelated-credit", requestID); w.Code != 409 || requests() != 0 {
+				t.Fatal("manual reset used an unverified credit", w.Code)
+			}
+			for range 2 {
+				if w := call(a.store.Admin, creditID, requestID); w.Code != 200 || !strings.Contains(w.Body.String(), `"result":"reset"`) {
+					t.Fatal("manual reset failed", w.Code, w.Body.String())
+				}
+			}
+			if requests() != 1 || a.store.read().Settings.AutoUseResets {
+				t.Fatal("manual retry consumed another credit or changed automation")
+			}
+			if auth, _ := a.core.GetByID(id); auth.Unavailable {
+				t.Fatal("manual reset left the account in cooldown")
+			}
+			if claude != nil {
+				claude.grant["resets_left"] = 1
+				if w := call(a.store.Admin, creditID, "edc80d60-2917-4a01-abcb-3aa49153f2ab"); w.Code != 200 || requests() != 2 {
+					t.Fatal("remaining Claude reset could not be used", w.Code)
+				}
+			}
+			_ = a.store.change(func(d *diskState) error {
+				c := d.Connections[provider]
+				c.Enabled = false
+				d.Connections[provider] = c
+				return nil
+			})
+			if w := call(a.store.Admin, creditID, requestID); w.Code != 409 {
+				t.Fatal("manual reset ignored a paused connection", w.Code)
+			}
+		})
 	}
 }

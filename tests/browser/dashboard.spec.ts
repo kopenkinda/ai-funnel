@@ -13,7 +13,7 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
   await expect(
     page.getByRole("button", { name: /Connect.*provider/ }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page.getByRole("link", { name: "Connections", exact: true }).click();
   const disabled = page.getByRole("region", { name: "Disabled providers" });
   const codex = page.getByRole("region", {
     name: "Codex connection",
@@ -72,7 +72,7 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
   await expect(
     page.getByRole("region", { name: "Codex usage", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page.getByRole("link", { name: "Connections", exact: true }).click();
   await expect(disabled.getByRole("region")).toHaveCount(2);
   await codex.getByRole("button", { name: "Add account", exact: true }).click();
   await expect(
@@ -129,7 +129,7 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
   await expect(
     enabled.getByRole("region", { name: "Codex connection" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "API keys", exact: true }).click();
+  await page.getByRole("link", { name: "API keys", exact: true }).click();
   await page
     .getByRole("button", { name: "Add your first key", exact: true })
     .click();
@@ -148,8 +148,61 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "Usage", exact: true }),
+    page.getByRole("link", { name: "Usage", exact: true }),
   ).toBeVisible();
+});
+
+test("dashboard routes survive refresh, direct links, and browser history", async ({
+  page,
+}) => {
+  await page.goto("/keys");
+  await page
+    .getByLabel("Dashboard key", { exact: true })
+    .fill("browser-test-dashboard-key");
+  await page.getByRole("button", { name: "Unlock dashboard" }).click();
+  await expect(page).toHaveURL(/\/keys$/);
+  await expect(
+    page.getByRole("heading", { name: "API keys", exact: true }),
+  ).toBeVisible();
+
+  const navigation = page.getByRole("navigation", { name: "Main navigation" });
+  await navigation
+    .getByRole("link", { name: "Connections", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/connections$/);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Connections", exact: true }),
+  ).toBeVisible();
+  await navigation.getByRole("link", { name: "Activity", exact: true }).click();
+  await expect(page).toHaveURL(/\/activity$/);
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "Connections", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(
+    page.getByRole("heading", { name: "Activity", exact: true }),
+  ).toBeVisible();
+
+  for (const [path, title] of [
+    ["/usage", "Usage"],
+    ["/keys", "API keys"],
+    ["/activity", "Activity"],
+  ]) {
+    await page.goto(path);
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: title, exact: true }),
+    ).toBeVisible();
+    await expect(
+      navigation.getByRole("link", { name: title, exact: true }),
+    ).toHaveAttribute("aria-current", "page");
+  }
+  await page.goto("/missing-page");
+  await expect(page).toHaveURL(/\/usage$/);
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/usage$/);
 });
 
 test("login fits a narrow viewport and keeps demo access removed", async ({
@@ -166,7 +219,7 @@ test("login fits a narrow viewport and keeps demo access removed", async ({
   ).toBe(true);
 });
 
-test("existing key access can be edited with provider model selections", async ({
+test("key access can be edited, archived, and restored with the same credential", async ({
   page,
   request,
 }) => {
@@ -198,7 +251,7 @@ test("existing key access can be edited with provider model selections", async (
     data: { provider: "claude", name: "Claude" },
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "API keys", exact: true }).click();
+  await page.getByRole("link", { name: "API keys", exact: true }).click();
   await page
     .getByRole("button", { name: "Select Editable devices", exact: true })
     .click();
@@ -304,7 +357,7 @@ test("existing key access can be edited with provider model selections", async (
     { connectionId: "claude", accountIds: null, models: null },
   ]);
   await page.reload();
-  await page.getByRole("button", { name: "API keys", exact: true }).click();
+  await page.getByRole("link", { name: "API keys", exact: true }).click();
   await page
     .getByRole("button", { name: "Select Coding tools", exact: true })
     .click();
@@ -331,9 +384,216 @@ test("existing key access can be edited with provider model selections", async (
     headers: { Authorization: `Bearer ${created.token}` },
   });
   expect(removed.status()).toBe(403);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page
+    .getByRole("button", { name: "Archive Coding tools", exact: true })
+    .click();
+  const confirmation = page.getByRole("alertdialog", { name: "Archive key?" });
+  await expect(confirmation).toBeVisible();
+  await confirmation
+    .getByRole("button", { name: "Archive key", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Select Coding tools", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("region", { name: "Lifetime cost by API key" })
+      .getByRole("listitem")
+      .filter({ hasText: "Coding tools" }),
+  ).toContainText("Archived");
+  await page.reload();
+  await page.getByRole("link", { name: "API keys", exact: true }).click();
+  const filter = page.getByRole("group", { name: "Key status" });
+  await filter.getByRole("button", { name: /^Archived/ }).click();
+  await page
+    .getByRole("button", { name: "Select Coding tools", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Coding tools", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("switch", { name: /Coding tools/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    dialog.getByRole("checkbox", { name: "All models", exact: true }),
+  ).toBeChecked();
+  expect(
+    (
+      await request.get("/providers/codex/codex/v1/models", {
+        headers: { Authorization: `Bearer ${created.token}` },
+      })
+    ).status(),
+  ).toBe(401);
+  await page.screenshot({
+    path: "/tmp/ai-funnel-archived-key-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "/tmp/ai-funnel-archived-key-mobile.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "Restore Coding tools", exact: true })
+    .click();
+  await expect(
+    page.getByText("No archived keys", { exact: true }),
+  ).toBeVisible();
+  await filter.getByRole("button", { name: "Current", exact: true }).click();
+  const resume = page.getByRole("switch", {
+    name: "Resume Coding tools",
+    exact: true,
+  });
+  await expect(resume).not.toBeChecked();
+  expect(
+    (
+      await request.get("/providers/codex/codex/v1/models", {
+        headers: { Authorization: `Bearer ${created.token}` },
+      })
+    ).status(),
+  ).toBe(401);
+  await resume.click();
+  expect(
+    (
+      await request.get("/providers/codex/codex/v1/models", {
+        headers: { Authorization: `Bearer ${created.token}` },
+      })
+    ).status(),
+  ).toBe(200);
 });
 
-test("usage shows reported limits and persists email privacy", async ({
+test("lifetime key charts rank cost and tokens independently", async ({
+  page,
+}) => {
+  const createdAt = new Date().toISOString();
+  const keys = ["Laptop@example.com", "Terminal", "Unused"].map(
+    (name, index) => ({
+      id: `key-${index}`,
+      name,
+      prefix: "sk-test-",
+      enabled: index !== 1,
+      archivedAt: index === 1 ? createdAt : null,
+      expiresAt: null,
+      dailyLimit: null,
+      grants: [{ connectionId: "codex", accountIds: null, models: null }],
+      imported: false,
+      createdAt,
+      lastUsedAt: null,
+      requestsToday: 0,
+    }),
+  );
+  const totals = (total: number, min: number, max = min, unpriced = 0) => ({
+    tokens: {
+      input: total,
+      cacheRead: 0,
+      cacheWrite: 0,
+      output: 0,
+      reasoning: 0,
+      unclassified: 0,
+      total,
+    },
+    cost: {
+      min,
+      max,
+      input: min,
+      cacheRead: 0,
+      cacheWrite: 0,
+      output: 0,
+      reasoning: 0,
+      priced: true,
+    },
+    requests: 1,
+    unpriced,
+  });
+  const keyUsage = {
+    "key-0": totals(1_000_000, 6),
+    "key-1": totals(3_000_000, 2),
+  };
+  await page.route("**/api/connections/codex/models", (route) =>
+    route.fulfill({ json: { data: [{ id: "gpt-6.1-sol" }] } }),
+  );
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/api/state", (route) =>
+    route.fulfill({
+      json: {
+        connections: [
+          {
+            id: "codex",
+            provider: "codex",
+            name: "Codex",
+            enabled: true,
+            accounts: [],
+            models: [],
+            createdAt,
+            syncedAt: null,
+            error: null,
+          },
+        ],
+        keys,
+        keyUsage,
+        requests: [],
+        publicUrl: "",
+      },
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("link", { name: "API keys", exact: true }).click();
+  const cost = page.getByRole("region", { name: "Lifetime cost by API key" });
+  const tokens = page.getByRole("region", {
+    name: "Lifetime tokens by API key",
+  });
+  await expect(cost.getByRole("listitem").first()).toContainText("$6.00 · 75%");
+  await expect(tokens.getByRole("listitem").first()).toContainText("Terminal");
+  await expect(tokens.getByRole("listitem").first()).toContainText("3M · 75%");
+  await expect(cost.getByText("Laptop@example.com", { exact: true })).toHaveCSS(
+    "filter",
+    /blur\(/,
+  );
+  await expect(cost.getByText(/sk-test/)).toHaveCount(0);
+  await expect(
+    cost.getByRole("progressbar", { name: "Laptop@example.com cost share" }),
+  ).toHaveAttribute("aria-valuenow", "75");
+  await expect(cost.getByRole("listitem").last()).toContainText("$0.00 · 0%");
+  await cost.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "/tmp/ai-funnel-key-usage-desktop.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("region", { name: "Lifetime API key usage" })
+    .screenshot({ path: "/tmp/ai-funnel-key-comparison.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await cost.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "/tmp/ai-funnel-key-usage-mobile.png",
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  keyUsage["key-0"] = totals(1_000_000, 6, 8);
+  keyUsage["key-1"] = totals(3_000_000, 0, 0, 1);
+  await page.reload();
+  await page.getByRole("link", { name: "API keys", exact: true }).click();
+  await expect(cost.getByRole("listitem").first()).toContainText(
+    "$6.00 to $8.00 · ≈100%",
+  );
+  await expect(cost.getByText("Unpriced", { exact: true })).toBeVisible();
+});
+
+test("usage orders reported limits and persists email privacy", async ({
   page,
 }) => {
   const account = {
@@ -369,8 +629,10 @@ test("usage shows reported limits and persists email privacy", async ({
               {
                 ...account,
                 quotas: [
+                  { label: "Code review 7d", remaining: 92, resetsAt: null },
                   { label: "7d", remaining: 73, resetsAt: null },
                   { label: "Monthly", remaining: null, resetsAt: null },
+                  { label: "5h", remaining: 81, resetsAt: null },
                 ],
                 resetCredits: { available: 2, applicable: 0 },
               },
@@ -384,7 +646,12 @@ test("usage shows reported limits and persists email privacy", async ({
             accounts: [
               {
                 ...account,
-                quotas: [{ label: "Fable 7d", remaining: 0, resetsAt: null }],
+                quotas: [
+                  { label: "Fable 7d", remaining: 0, resetsAt: null },
+                  { label: "30d", remaining: 60, resetsAt: null },
+                  { label: "7d", remaining: 73, resetsAt: null },
+                  { label: "5h", remaining: 81, resetsAt: null },
+                ],
                 resetCredits: {
                   available: 3,
                   applicable: 0,
@@ -421,7 +688,9 @@ test("usage shows reported limits and persists email privacy", async ({
   await expect(email).toHaveCSS("filter", /blur\(/);
   await expect(email.locator("..")).not.toHaveAttribute("title");
   await expect(codex.getByText("73%", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Monthly usage", { exact: true })).toHaveCount(0);
+  await expect(codex.getByText("Monthly usage", { exact: true })).toHaveCount(
+    0,
+  );
   await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
   const fable = page.getByRole("region", { name: "Fable weekly usage" });
   await expect(fable.getByText("0%", { exact: true })).toBeVisible();
@@ -435,6 +704,29 @@ test("usage shows reported limits and persists email privacy", async ({
     name: "Claude usage",
     exact: true,
   });
+  for (const [provider, labels, titles] of [
+    [
+      codex,
+      ["5h", "7d", "Code review 7d"],
+      ["5-hour usage", "Weekly usage", "Code review weekly usage"],
+    ],
+    [
+      claude,
+      ["5h", "7d", "Fable 7d", "30d"],
+      ["5-hour usage", "Weekly usage", "Fable weekly usage", "Monthly usage"],
+    ],
+  ] as const) {
+    await expect(provider.locator('[data-slot="card-title"]')).toHaveText([
+      ...titles,
+    ]);
+    expect(
+      await provider
+        .getByRole("progressbar")
+        .evaluateAll((bars) =>
+          bars.map((bar) => bar.getAttribute("aria-label")),
+        ),
+    ).toEqual(labels.map((label) => `Account ${label} remaining`));
+  }
   await claude.getByText("3 banked resets", { exact: true }).hover();
   const claudeResets = page
     .getByRole("tooltip")
@@ -451,6 +743,216 @@ test("usage shows reported limits and persists email privacy", async ({
   await page.getByRole("button", { name: "Hide emails" }).click();
   await page.reload();
   await expect(email).toHaveCSS("filter", /blur\(/);
+});
+
+test("account rows keep plans inline and only show exceptional statuses", async ({
+  page,
+}) => {
+  const at = new Date().toISOString();
+  const quota = [
+    {
+      label: "7d",
+      remaining: 73,
+      resetsAt: new Date(Date.now() + 86400000).toISOString(),
+    },
+  ];
+  const account = (
+    id: string,
+    plan: string,
+    status = "active",
+    planTier?: string,
+  ) => ({
+    id,
+    name: `${id}@example.com`,
+    email: `${id}@example.com`,
+    plan,
+    planTier,
+    status,
+    quotas: quota,
+  });
+  const credit = (id: string, hours?: number) => ({
+    id,
+    status: "available",
+    expires_at:
+      hours === undefined
+        ? undefined
+        : new Date(Date.now() + hours * 3600000).toISOString(),
+    resets_left: 1,
+  });
+  const codexCredits = {
+    available: 2,
+    items: [credit("later", 48), credit("next", 1.5), credit("expired", -1)],
+  };
+  const claudeCredits = { available: 1, items: [credit("grant")] };
+  const resetRequests: { creditId: string; requestId: string }[] = [];
+  const connections = [
+    {
+      id: "codex",
+      provider: "codex",
+      name: "Codex",
+      enabled: true,
+      models: [],
+      createdAt: at,
+      error: null,
+      accounts: [
+        account("free", "free"),
+        account("plus", "plus"),
+        account("business", "team", "paused"),
+        {
+          ...account("pro100", "prolite", "rate_limited"),
+          resetCredits: codexCredits,
+        },
+        account("pro200", "pro", "error"),
+        account("pro500", "promax"),
+        { ...account("quota", "plus"), quotaError: "Lookup failed" },
+      ],
+    },
+    {
+      id: "claude",
+      provider: "claude",
+      name: "Claude",
+      enabled: true,
+      models: [],
+      createdAt: at,
+      error: null,
+      accounts: [
+        account("claudepro", "pro"),
+        account("max5", "claude_max", "active", "default_claude_max_5x"),
+        {
+          ...account("max20", "claude_max", "active", "default_claude_max_20x"),
+          resetCredits: claudeCredits,
+        },
+        account("unknown", "Subscription"),
+      ],
+    },
+  ];
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/api/state", (route) =>
+    route.fulfill({
+      json: { connections, keys: [], requests: [], publicUrl: "" },
+    }),
+  );
+  await page.route("**/api/accounts/*/reset", (route) => {
+    const body = route.request().postDataJSON();
+    resetRequests.push(body);
+    if (body.creditId === "next") {
+      codexCredits.items = codexCredits.items.filter(
+        (credit) => credit.id !== "next",
+      );
+      codexCredits.available--;
+    } else {
+      claudeCredits.items = [];
+      claudeCredits.available = 0;
+    }
+    return route.fulfill({ json: { result: "reset" } });
+  });
+  await page.goto("/usage");
+  const codex = page.getByRole("table", {
+    name: "Codex accounts",
+    exact: true,
+  });
+  const claude = page.getByRole("table", {
+    name: "Claude accounts",
+    exact: true,
+  });
+  await expect(codex.getByRole("columnheader")).toHaveText([
+    "Account",
+    "Quota",
+    "Actions",
+  ]);
+  await expect(codex.getByText(/^ID /)).toHaveCount(0);
+  await expect(codex.getByText("Active", { exact: true })).toHaveCount(0);
+  await expect(
+    codex.getByRole("img", { name: "Free", exact: true }),
+  ).toBeVisible();
+  await expect(
+    codex.getByRole("img", { name: "Plus · 1×", exact: true }),
+  ).toHaveCount(2);
+  await expect(
+    codex.getByRole("img", { name: "Business · 1×", exact: true }),
+  ).toBeVisible();
+  await expect(
+    codex.getByRole("img", { name: "Pro 100 · 5×", exact: true }),
+  ).toBeVisible();
+  await expect(
+    codex.getByRole("img", { name: "Pro 200 · 10×", exact: true }),
+  ).toBeVisible();
+  const pro500 = codex.getByRole("img", { name: "Pro 500 · 20×", exact: true });
+  await pro500.focus();
+  await expect(page.getByRole("tooltip")).toHaveText("Pro 500 · 20×");
+  await pro500.press("Escape");
+  for (const status of [
+    "Paused",
+    "Rate limited",
+    "Error",
+    "Quota unavailable",
+  ]) {
+    const text = codex.getByText(status, { exact: true });
+    await expect(text).toBeVisible();
+    await expect(text.locator("..").getByText(/@example.com/)).toHaveCount(1);
+    await expect(text).not.toHaveAttribute("data-slot", "badge");
+  }
+  await expect(
+    claude.getByRole("img", { name: "Pro · 1×", exact: true }),
+  ).toBeVisible();
+  await expect(
+    claude.getByRole("img", { name: "Max · 5×", exact: true }),
+  ).toBeVisible();
+  await expect(
+    claude.getByRole("img", { name: "Max · 20×", exact: true }),
+  ).toBeVisible();
+  await expect(
+    claude.getByRole("img", { name: "Subscription", exact: true }),
+  ).toBeVisible();
+  await expect(codex.getByRole("link")).toHaveCount(0);
+  await expect(
+    codex.getByRole("button", { name: "Use reset", exact: true }),
+  ).toHaveCount(1);
+  const codexReset = codex
+    .getByRole("row")
+    .filter({ hasText: "pro100@example.com" })
+    .getByRole("cell")
+    .last();
+  await expect(codexReset).toContainText("Expires in 1h");
+  await codexReset
+    .getByRole("button", { name: "Use reset", exact: true })
+    .click();
+  await expect(codexReset).toContainText("Expires in 2d");
+  expect(resetRequests[0].creditId).toBe("next");
+  expect(resetRequests[0].requestId).toMatch(/^[a-f0-9-]{36}$/);
+  const claudeReset = claude
+    .getByRole("row")
+    .filter({ hasText: "max20@example.com" })
+    .getByRole("cell")
+    .last();
+  await expect(claudeReset).toContainText("No expiry");
+  await claudeReset
+    .getByRole("button", { name: "Use reset", exact: true })
+    .click();
+  await expect(claudeReset.getByRole("button")).toHaveCount(0);
+  expect(resetRequests[1].creditId).toBe("grant");
+  await page.getByRole("heading", { name: "Usage", exact: true }).click();
+  await page.screenshot({
+    path: "/tmp/ai-funnel-account-rows-desktop.png",
+    fullPage: true,
+  });
+  connections[1].enabled = false;
+  await page.reload();
+  await expect(claude.getByText("Paused", { exact: true })).toHaveCount(4);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "/tmp/ai-funnel-account-rows-mobile.png",
+    fullPage: true,
+  });
 });
 
 test("usage accounting, hub settings and request filters", async ({ page }) => {
@@ -605,7 +1107,7 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
   await auto.uncheck();
   await expect(auto).not.toBeChecked();
   await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await page.getByRole("link", { name: "Activity", exact: true }).click();
   await expect(
     page.getByRole("cell", { name: "WS", exact: true }),
   ).toBeVisible();
@@ -621,7 +1123,7 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
   ).toContainText("Cache read");
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole("button", { name: "Usage", exact: true }).click();
+  await page.getByRole("link", { name: "Usage", exact: true }).click();
   await page.screenshot({
     path: "/tmp/ai-funnel-observability-desktop.png",
     fullPage: true,

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link, Navigate, useRoutes } from "react-router";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
   Activity01Icon,
@@ -27,13 +28,13 @@ import { cn } from "@/lib/utils";
 import { api, type State } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { UsageMetrics } from "./metrics";
-import { KeyManager } from "./keys";
+import { KeyManager, KeyUsageSummary } from "./keys";
 import { ActivityLog } from "./activity";
 import { DashboardSettings } from "./settings";
 import { UsageOverview } from "./usage.tsx";
 import { PrivacyButton, PrivateText } from "./privacy.tsx";
 import { ConnectionDetails, ConnectionForm, KeyForm } from "./forms.tsx";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -75,10 +76,15 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const tabs = [
-  { id: "pool", name: "Usage", icon: Layers01Icon },
-  { id: "connections", name: "Connections", icon: Link01Icon },
-  { id: "keys", name: "API keys", icon: Key01Icon },
-  { id: "activity", name: "Activity", icon: Activity01Icon },
+  { id: "pool", path: "/usage", name: "Usage", icon: Layers01Icon },
+  {
+    id: "connections",
+    path: "/connections",
+    name: "Connections",
+    icon: Link01Icon,
+  },
+  { id: "keys", path: "/keys", name: "API keys", icon: Key01Icon },
+  { id: "activity", path: "/activity", name: "Activity", icon: Activity01Icon },
 ] as const;
 type Tab = (typeof tabs)[number]["id"];
 const empty: State = { connections: [], keys: [], requests: [], publicUrl: "" };
@@ -101,9 +107,15 @@ const unsupportedProviders: {
 ];
 
 export function App() {
+  return useRoutes([
+    ...tabs.map(({ id, path }) => ({ path, element: <Dashboard tab={id} /> })),
+    { path: "*", element: <Navigate to="/usage" replace /> },
+  ]);
+}
+
+function Dashboard({ tab }: { tab: Tab }) {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [state, setState] = useState<State>(empty);
-  const [tab, setTab] = useState<Tab>("pool");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [modal, setModal] = useState<"key" | "settings" | null>(null);
@@ -204,7 +216,6 @@ export function App() {
     <div className="flex min-h-svh flex-col">
       <Navigation
         tab={tab}
-        onTab={setTab}
         onSettings={() => setModal("settings")}
         onExit={() => {
           void action("logout", async () => {
@@ -260,6 +271,23 @@ export function App() {
               <UsageOverview
                 connections={connected}
                 onReconnect={(c) => setAccountProvider(c.provider)}
+                onReset={(account, creditId) =>
+                  action(`reset:${account.id}`, async () => {
+                    const { result } = await api<{ result: string }>(
+                      `/accounts/${encodeURIComponent(account.id)}/reset`,
+                      "POST",
+                      { creditId, requestId: crypto.randomUUID() },
+                    );
+                    if (result === "nothing_to_reset" || result === "no_credit")
+                      await reload();
+                    if (result === "nothing_to_reset")
+                      throw new Error("Nothing to reset for this account.");
+                    if (result === "no_credit")
+                      throw new Error(
+                        "This banked reset is no longer available.",
+                      );
+                  })
+                }
               />
             ) : (
               <Empty className="min-h-80 border">
@@ -497,8 +525,13 @@ export function App() {
                     api(`/keys/${k.id}`, "PATCH", { enabled: !k.enabled }),
                   )
                 }
-                onRemove={(k) =>
+                onArchive={(k) =>
                   setRemove({ type: "keys", id: k.id, name: k.name })
+                }
+                onRestore={(k) =>
+                  void action(k.id, () =>
+                    api(`/keys/${k.id}`, "PATCH", { archived: false }),
+                  )
                 }
               />
             ) : (
@@ -527,6 +560,9 @@ export function App() {
               keys={state.keys}
               refreshId={state.requests[0]?.id}
             />
+          )}
+          {tab === "keys" && state.keys.length > 0 && (
+            <KeyUsageSummary keys={state.keys} usage={state.keyUsage} />
           )}
         </div>
       </main>
@@ -570,12 +606,12 @@ export function App() {
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
-                Remove {remove.type === "keys" ? "shared key" : "connection"}?
+                {remove.type === "keys" ? "Archive key?" : "Remove connection?"}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 <PrivateText>{remove.name}</PrivateText>.{" "}
                 {remove.type === "keys"
-                  ? "This key will stop working through ai-funnel."
+                  ? "Access stops. Usage history is kept."
                   : "Clients using this URL will stop working. Upstream accounts stay in their original service."}
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -592,7 +628,7 @@ export function App() {
                 }
               >
                 {busy === "remove" && <Spinner data-icon="inline-start" />}
-                Remove {remove.type === "keys" ? "key" : "connection"}
+                {remove.type === "keys" ? "Archive key" : "Remove connection"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -604,12 +640,10 @@ export function App() {
 
 function Navigation({
   tab,
-  onTab,
   onExit,
   onSettings,
 }: {
   tab: Tab;
-  onTab: (value: Tab) => void;
   onExit: () => void;
   onSettings: () => void;
 }) {
@@ -621,13 +655,17 @@ function Navigation({
           className="grid min-w-0 grid-cols-2 gap-1 sm:flex sm:flex-wrap"
         >
           {tabs.map((t) => (
-            <Button
+            <Link
               key={t.id}
-              variant={tab === t.id ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start sm:justify-center"
+              to={t.path}
+              className={cn(
+                buttonVariants({
+                  variant: tab === t.id ? "secondary" : "ghost",
+                  size: "sm",
+                }),
+                "justify-start sm:justify-center",
+              )}
               aria-current={tab === t.id ? "page" : undefined}
-              onClick={() => onTab(t.id)}
             >
               <Icon
                 icon={t.icon}
@@ -635,7 +673,7 @@ function Navigation({
                 className="hidden sm:block"
               />
               {t.name}
-            </Button>
+            </Link>
           ))}
         </nav>
         <div className="flex shrink-0 items-center gap-1">

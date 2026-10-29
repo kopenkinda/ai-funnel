@@ -1,11 +1,29 @@
+import { useState } from "react";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
-import { ArrowUpRight01Icon, Clock01Icon } from "@hugeicons/core-free-icons";
-import { providerNames, type Account, type PublicConnection } from "./types.ts";
+import {
+  Clock01Icon,
+  CreditCardIcon,
+  MoneyNotFound04Icon,
+  MultiplicationSignIcon,
+  Refresh01Icon,
+} from "@hugeicons/core-free-icons";
+import {
+  providerNames,
+  type Account,
+  type Provider,
+  type PublicConnection,
+} from "./types.ts";
 import { timeUntil } from "./api.ts";
 import { PrivateText, usePrivacy } from "./privacy.tsx";
-import { Badge } from "@/components/ui/badge";
+import { cn, compareQuotaLabels } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Table,
   TableBody,
@@ -20,8 +38,10 @@ const sentenceCase = (text: string) =>
 
 export function AccountsTable({
   connections,
+  onReset,
 }: {
   connections: PublicConnection[];
+  onReset: (account: Account, creditId: string) => Promise<void>;
 }) {
   const privacy = usePrivacy((state) => state.enabled);
   const rows = connections.flatMap((connection) =>
@@ -35,13 +55,11 @@ export function AccountsTable({
     <div className="min-w-0 overflow-hidden rounded-xl border">
       <Table
         aria-label={`${providerNames[connections[0]!.provider]} accounts`}
-        className="min-w-[740px]"
+        className="min-w-[600px]"
       >
         <TableHeader>
           <TableRow className="[&>th]:h-9">
-            <TableHead className="w-[32%]">Account</TableHead>
-            <TableHead className="w-[15%]">Status</TableHead>
-            <TableHead className="w-[12%]">Plan</TableHead>
+            <TableHead className="w-[45%]">Account</TableHead>
             <TableHead>Quota</TableHead>
             <TableHead className="pr-4 text-right">Actions</TableHead>
           </TableRow>
@@ -55,38 +73,26 @@ export function AccountsTable({
             >
               <TableCell>
                 <div className="flex flex-col gap-0.5">
-                  <span
-                    className="font-medium"
-                    title={privacy ? undefined : account.name}
-                  >
-                    <PrivateText>{account.email || account.name}</PrivateText>
-                  </span>
-                  <span
-                    className="text-xs text-muted-foreground"
-                    title={privacy ? undefined : account.id}
-                  >
-                    ID{" "}
-                    <PrivateText>
-                      {account.id.length > 18
-                        ? `${account.id.slice(0, 8)}…${account.id.slice(-6)}`
-                        : account.id}
-                    </PrivateText>
-                    {connections.length > 1 && (
-                      <PrivateText>{` · ${connection.name}`}</PrivateText>
-                    )}
-                  </span>
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className="font-medium"
+                      title={privacy ? undefined : account.name}
+                    >
+                      <PrivateText>{account.email || account.name}</PrivateText>
+                    </span>
+                    <AccountPlan
+                      account={account}
+                      provider={connection.provider}
+                    />
+                  </div>
+                  <AccountStatus account={account} connection={connection} />
                 </div>
-              </TableCell>
-              <TableCell>
-                <AccountStatus account={account} connection={connection} />
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {account.plan ? sentenceCase(account.plan) : "-"}
               </TableCell>
               <TableCell>
                 <div className="flex flex-col gap-1.5">
                   {account.quotas
                     .filter((q) => q.remaining !== null)
+                    .sort((a, b) => compareQuotaLabels(a.label, b.label))
                     .map((quota, index) => (
                       <div
                         key={`${quota.label}/${index}`}
@@ -128,35 +134,77 @@ export function AccountsTable({
                 </div>
               </TableCell>
               <TableCell className="pr-4 text-right">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={
-                    privacy
-                      ? "Open account provider"
-                      : `Open provider for ${account.email || account.name}`
-                  }
-                  title="Open provider dashboard"
-                  nativeButton={false}
-                  render={
-                    <a
-                      href={
-                        connection.provider === "codex"
-                          ? "https://chatgpt.com"
-                          : "https://claude.ai"
-                      }
-                      target="_blank"
-                      rel="noreferrer"
-                    />
-                  }
-                >
-                  <Icon icon={ArrowUpRight01Icon} />
-                </Button>
+                <AccountReset
+                  account={account}
+                  connection={connection}
+                  onReset={onReset}
+                />
               </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+function AccountReset({
+  account,
+  connection,
+  onReset,
+}: {
+  account: Account;
+  connection: PublicConnection;
+  onReset: (account: Account, creditId: string) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const credit = account.resetCredits?.items
+    ?.filter(
+      (credit) =>
+        credit.status === "available" &&
+        (credit.resets_left ?? 1) > 0 &&
+        (!credit.expires_at || Date.parse(credit.expires_at) > Date.now()),
+    )
+    .sort(
+      (a, b) =>
+        (a.expires_at ? Date.parse(a.expires_at) : Infinity) -
+        (b.expires_at ? Date.parse(b.expires_at) : Infinity),
+    )[0];
+  if (!credit) return null;
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        variant="outline"
+        size="xs"
+        disabled={busy || !connection.enabled || account.status === "paused"}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await onReset(account, credit.id);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? (
+          <Spinner data-icon="inline-start" />
+        ) : (
+          <Icon icon={Refresh01Icon} data-icon="inline-start" />
+        )}
+        Use reset
+      </Button>
+      <span
+        className="text-xs text-muted-foreground"
+        title={
+          credit.expires_at
+            ? new Date(credit.expires_at).toLocaleString()
+            : undefined
+        }
+      >
+        {credit.expires_at
+          ? timeUntil(credit.expires_at).replace(/^Resets/, "Expires")
+          : "No expiry"}
+      </span>
     </div>
   );
 }
@@ -168,29 +216,105 @@ function AccountStatus({
   account: Account;
   connection: PublicConnection;
 }) {
-  const active = ["active", "ready", "connected", "ok"].includes(
-    account.status.toLowerCase(),
-  );
+  const status = account.status.toLowerCase();
+  const active = ["active", "ready", "connected", "ok"].includes(status);
   const label = !connection.enabled
     ? "Paused"
     : connection.error
       ? "Sync error"
-      : active
-        ? "Active"
-        : sentenceCase(account.status);
-  const variant = !connection.enabled
-    ? "secondary"
-    : connection.error
-      ? "destructive"
-      : active
-        ? "success"
-        : account.status.includes("limit")
-          ? "warning"
-          : "secondary";
+      : account.quotaError
+        ? "Quota unavailable"
+        : active
+          ? null
+          : sentenceCase(account.status);
+  if (!label) return null;
+  const warning =
+    label === "Paused" ||
+    label === "Quota unavailable" ||
+    label.toLowerCase().includes("limit");
   return (
-    <Badge variant={variant}>
-      <span className="size-1.5 shrink-0 rounded-full bg-current" />
+    <span
+      className={cn("text-xs", warning ? "text-warning" : "text-destructive")}
+    >
       {label}
-    </Badge>
+    </span>
+  );
+}
+
+function AccountPlan({
+  account,
+  provider,
+}: {
+  account: Account;
+  provider: Provider;
+}) {
+  const plan = (account.planTier || account.plan)
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  const free = [
+    "free",
+    "freeworkspace",
+    "claudefree",
+    "defaultclaudefree",
+  ].includes(plan);
+  const tiers: Record<string, [string, number]> =
+    provider === "codex"
+      ? {
+          plus: ["Plus", 1],
+          team: ["Business", 1],
+          business: ["Business", 1],
+          prolite: ["Pro 100", 5],
+          pro100: ["Pro 100", 5],
+          pro: ["Pro 200", 10],
+          pro200: ["Pro 200", 10],
+          promax: ["Pro 500", 20],
+          pro500: ["Pro 500", 20],
+        }
+      : {
+          pro: ["Pro", 1],
+          claudepro: ["Pro", 1],
+          defaultclaudepro: ["Pro", 1],
+          team: ["Team", 1],
+          claudeteam: ["Team", 1],
+          max5x: ["Max", 5],
+          claudemax5x: ["Max", 5],
+          defaultclaudemax5x: ["Max", 5],
+          max20x: ["Max", 20],
+          claudemax20x: ["Max", 20],
+          defaultclaudemax20x: ["Max", 20],
+        };
+  const tier = tiers[plan];
+  const label = free
+    ? "Free"
+    : tier
+      ? `${tier[0]} · ${tier[1]}×`
+      : sentenceCase(account.plan || account.planTier || "Unknown plan");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={label}
+            tabIndex={0}
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-xs text-muted-foreground tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        }
+      >
+        {tier ? <span aria-hidden="true">{tier[1]}</span> : null}
+        <Icon
+          icon={
+            free
+              ? MoneyNotFound04Icon
+              : tier
+                ? MultiplicationSignIcon
+                : CreditCardIcon
+          }
+          size={tier ? 12 : 16}
+          aria-hidden="true"
+        />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }

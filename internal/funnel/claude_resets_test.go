@@ -42,7 +42,7 @@ func (x *claudeResetExecutor) HttpRequest(_ context.Context, _ *core.Auth, r *ht
 		if x.onProfile != nil {
 			x.onProfile()
 		}
-		data = map[string]any{"organization": map[string]string{"uuid": resetTestOrg}}
+		data = map[string]any{"organization": map[string]string{"uuid": resetTestOrg, "organization_type": "claude_max", "rate_limit_tier": "default_claude_max_20x"}}
 	case r.Method == "POST" && r.URL.String() == "https://api.anthropic.com/api/organizations/"+resetTestOrg+"/reset_rate_limits":
 		var p map[string]string
 		if json.NewDecoder(r.Body).Decode(&p) != nil || p["program"] != "cedar_ember" || p["grant_id"] != "grant" || p["request_id"] == "" {
@@ -123,6 +123,11 @@ func TestClaudeResetRetryRestartAndMultipleUses(t *testing.T) {
 	if snapshot.ResetCredits == nil || snapshot.ResetCredits.Available != 2 || len(snapshot.Quotas) != 1 {
 		t.Fatal("regular usage refresh did not discover Claude grants alongside quotas")
 	}
+	account := a.publicConnection(a.store.read().Connections["claude"])["accounts"].([]Account)[0]
+	if account.Plan != "claude_max" || account.PlanTier != "default_claude_max_20x" {
+		t.Fatal("usage refresh did not expose the Claude subscription tier")
+	}
+	profileReads := x.profileReads
 	a.CheckExpiringResets(ctx)
 	if len(x.requests) != 0 {
 		t.Fatal("automation must default off")
@@ -165,7 +170,7 @@ func TestClaudeResetRetryRestartAndMultipleUses(t *testing.T) {
 	if len(x.requests) != 3 || x.requests[1] != x.requests[2] {
 		t.Fatal("unconfirmed request changed after restart or count decrease")
 	}
-	if x.profileReads != 1 {
+	if x.profileReads != profileReads+1 {
 		t.Fatal("organization was not persisted")
 	}
 	if auth, _ := a.core.GetByID("claude-account"); auth.Unavailable || auth.Quota.Exceeded {

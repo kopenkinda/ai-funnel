@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
@@ -83,6 +84,84 @@ func (a *App) fetchCredits(ctx context.Context, auth *core.Auth, previous *Reset
 func terminalReset(result string) bool {
 	return result == "reset" || result == "already_redeemed" || result == "no_credit"
 }
+
+func (a *App) resetAccount(c *gin.Context, id string) {
+	var b struct {
+		CreditID  string `json:"creditId"`
+		RequestID string `json:"requestId"`
+	}
+	if !decode(c, &b) {
+		return
+	}
+	if _, err := uuid.Parse(b.RequestID); err != nil || b.CreditID == "" || len(b.CreditID) > 256 {
+		fail(c, 400, "Supply a banked reset and request ID.")
+		return
+	}
+	a.resetMu.Lock()
+	defer a.resetMu.Unlock()
+	auth, ok := a.core.GetByID(id)
+	if !ok || auth.Disabled || (auth.Provider != "codex" && auth.Provider != "claude") {
+		fail(c, 404, "Account unavailable.")
+		return
+	}
+	d := a.store.read()
+	conn := d.Connections[auth.Provider]
+	if !conn.Enabled {
+		fail(c, 409, "This connection is paused.")
+		return
+	}
+	previous := d.ResetAttempts[id+"|"+b.CreditID]
+	if previous.Result != "" && ((auth.Provider == "codex" && terminalReset(previous.Result)) || previous.RequestID == b.RequestID) {
+		c.JSON(200, gin.H{"result": previous.Result})
+		return
+	}
+	credits := a.fetchCredits(c.Request.Context(), auth, d.Snapshots[id].ResetCredits)
+	if !a.save(c, func(d *diskState) error {
+		snap := d.Snapshots[id]
+		snap.ResetCredits = credits
+		d.Snapshots[id] = snap
+		return nil
+	}) {
+		return
+	}
+	if credits.Error != "" {
+		fail(c, 502, "Banked reset lookup unavailable.")
+		return
+	}
+	var selected *ResetCredit
+	for _, credit := range activeCredits(credits.Items, now()) {
+		if credit.ID == b.CreditID && !resetAttemptBlocks(credit, previous) {
+			selected = &credit
+			break
+		}
+	}
+	if selected == nil {
+		fail(c, 409, "This banked reset is no longer available.")
+		return
+	}
+	var err error
+	if auth.Provider == "claude" {
+		if !selected.UsableNow {
+			fail(c, 409, "The provider cannot use this reset right now.")
+			return
+		}
+		err = a.consumeClaudeResetLocked(c.Request.Context(), auth, *selected, b.RequestID)
+	} else {
+		_, _, err = a.consumeResetLocked(c.Request.Context(), auth, selected.ID)
+	}
+	if err != nil {
+		fail(c, 502, "Provider reset request failed.")
+		return
+	}
+	result := a.store.read().ResetAttempts[id+"|"+b.CreditID].Result
+	if result == "" {
+		fail(c, 409, "The reset could not be applied. Refresh and try again.")
+		return
+	}
+	a.refresh(c.Request.Context(), conn)
+	c.JSON(200, gin.H{"result": result})
+}
+
 func (a *App) consumeReset(ctx context.Context, auth *core.Auth, creditID string) (int, []byte, error) {
 	a.resetMu.Lock()
 	defer a.resetMu.Unlock()
@@ -195,7 +274,7 @@ func (a *App) CheckExpiringResets(ctx context.Context) {
 				break
 			}
 			if auth.Provider == "claude" {
-				_ = a.consumeClaudeResetLocked(ctx, latest, credit)
+				_ = a.consumeClaudeResetLocked(ctx, latest, credit, "")
 			} else {
 				_, _, _ = a.consumeResetLocked(ctx, latest, credit.ID)
 			}

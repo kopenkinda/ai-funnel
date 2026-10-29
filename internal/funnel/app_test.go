@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -309,9 +310,11 @@ func TestEmbeddedService(t *testing.T) {
 		read("response.completed")
 		send()
 		read("Daily request limit")
+		endpoint := ""
 		for id, k := range store.read().Keys {
 			if k.Hash == digest(clientKey) {
-				status, b := request("PATCH", "/api/keys/"+id, admin, `{"dailyLimit":null,"grants":[{"connectionId":"codex","accountIds":["account-a"],"models":null}]}`)
+				endpoint = "/api/keys/" + id
+				status, b := request("PATCH", endpoint, admin, `{"dailyLimit":null,"grants":[{"connectionId":"codex","accountIds":["account-a"],"models":null}]}`)
 				if status != 200 {
 					t.Fatalf("edit WebSocket access: %d %s", status, b)
 				}
@@ -319,6 +322,12 @@ func TestEmbeddedService(t *testing.T) {
 		}
 		send()
 		read("Account access changed")
+		status, _ := request("DELETE", endpoint, admin, "")
+		if status != 200 {
+			t.Fatal("archive failed", status)
+		}
+		send()
+		read("archived")
 		capture.mu.Lock()
 		capture.ids = nil
 		capture.mu.Unlock()
@@ -554,6 +563,82 @@ func TestEmbeddedService(t *testing.T) {
 		after := persisted.read().Keys[before.ID]
 		if after.Hash != before.Hash || after.Prefix != before.Prefix || after.CreatedAt != before.CreatedAt || after.DailyLimit != nil || after.ExpiresAt != nil || after.LastUsedAt == nil {
 			t.Fatal("edit changed key identity or lost persisted settings")
+		}
+	})
+	t.Run("archiving retains identity and history and restores paused", func(t *testing.T) {
+		clientKey := makeKey("null")
+		var before Key
+		for _, k := range store.read().Keys {
+			if k.Hash == digest(clientKey) {
+				before = k
+			}
+		}
+		endpoint := "/api/keys/" + before.ID
+		totals := UsageTotals{Tokens: Tokens{Total: 100}, Requests: 1, Cost: Cost{Min: 1, Max: 1}}
+		if err := store.change(func(d *diskState) error {
+			d.KeyUsage[before.ID] = totals
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		status, _ := request("DELETE", endpoint, clientKey, "")
+		if status != 401 {
+			t.Fatal("client key archived itself", status)
+		}
+		status, _ = request("DELETE", endpoint, admin, "")
+		if status != 200 {
+			t.Fatal("archive failed", status)
+		}
+		archived := store.read().Keys[before.ID]
+		want := before
+		want.Enabled = false
+		want.ArchivedAt = archived.ArchivedAt
+		if archived.ArchivedAt == nil || !reflect.DeepEqual(archived, want) {
+			t.Fatal("archive lost key identity or settings")
+		}
+		status, _ = request("DELETE", endpoint, admin, "")
+		if status != 200 || !store.read().Keys[before.ID].ArchivedAt.Equal(*archived.ArchivedAt) {
+			t.Fatal("repeat archive changed the record", status)
+		}
+		status, _ = request("PATCH", endpoint, admin, `{"enabled":true}`)
+		if status != 400 {
+			t.Fatal("archived key could be enabled without restoring", status)
+		}
+		status, _ = request("POST", path, clientKey, payload)
+		if status != 401 {
+			t.Fatal("archived credential accepted", status)
+		}
+		persisted, err := NewStore(store.dir, admin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(persisted.read().Keys[before.ID], archived) || !reflect.DeepEqual(persisted.read().KeyUsage[before.ID], totals) {
+			t.Fatal("archive or lifetime usage lost on restart")
+		}
+		status, _ = request("POST", "/api/keys", admin, fmt.Sprintf(`{"name":"Duplicate","existingKey":%q,"grants":[{"connectionId":"codex","accountIds":null,"models":null}]}`, clientKey))
+		if status < 400 {
+			t.Fatal("archived credential was registered as a new key")
+		}
+		status, b := request("PATCH", endpoint, admin, `{"archived":false}`)
+		if status != 200 || strings.Contains(string(b), before.Hash) {
+			t.Fatal("restore failed or leaked key", status)
+		}
+		restored := store.read().Keys[before.ID]
+		want.ArchivedAt = nil
+		if !reflect.DeepEqual(restored, want) {
+			t.Fatal("restore changed identity, permissions, or enabled the key")
+		}
+		status, _ = request("GET", "/providers/codex/codex/v1/models", clientKey, "")
+		if status != 401 {
+			t.Fatal("restored key was not paused", status)
+		}
+		status, _ = request("PATCH", endpoint, admin, `{"enabled":true}`)
+		if status != 200 {
+			t.Fatal(status)
+		}
+		status, _ = request("GET", "/providers/codex/codex/v1/models", clientKey, "")
+		if status != 200 {
+			t.Fatal("original credential did not work after restore and enable", status)
 		}
 	})
 	t.Run("paused and deleted assignments fail closed", func(t *testing.T) {

@@ -5,6 +5,7 @@ import { timeUntil } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { AccountsTable } from "./accounts.tsx";
 import { PrivateText } from "./privacy.tsx";
+import { compareQuotaLabels } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,9 +35,11 @@ const windowName = (label: string) =>
 export function UsageOverview({
   connections,
   onReconnect,
+  onReset,
 }: {
   connections: PublicConnection[];
   onReconnect: (connection: PublicConnection) => void;
+  onReset: (account: Account, creditId: string) => Promise<void>;
 }) {
   return (
     <TooltipProvider>
@@ -52,7 +55,7 @@ export function UsageOverview({
                 a.quotas.filter((q) => q.remaining != null).map((q) => q.label),
               ),
             ),
-          ];
+          ].sort(compareQuotaLabels);
           return (
             <section
               key={provider}
@@ -95,7 +98,10 @@ export function UsageOverview({
                   ))}
                 </div>
               )}
-              <AccountsTable connections={providerConnections} />
+              <AccountsTable
+                connections={providerConnections}
+                onReset={onReset}
+              />
             </section>
           );
         })}

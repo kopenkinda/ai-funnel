@@ -28,6 +28,7 @@ type Key struct {
 	Hash          string     `json:"hash,omitempty"`
 	Prefix        string     `json:"prefix"`
 	Enabled       bool       `json:"enabled"`
+	ArchivedAt    *time.Time `json:"archivedAt,omitempty"`
 	ExpiresAt     *time.Time `json:"expiresAt"`
 	DailyLimit    *int       `json:"dailyLimit"`
 	Grants        []Grant    `json:"grants"`
@@ -81,6 +82,7 @@ type diskState struct {
 	Requests      []RequestLog            `json:"requests"`
 	Daily         map[string]DailyUsage   `json:"daily,omitempty"`
 	Hourly        map[string]DailyUsage   `json:"hourly"`
+	KeyUsage      map[string]UsageTotals  `json:"keyUsage"`
 	TrackingAt    *time.Time              `json:"trackingAt,omitempty"`
 }
 type Store struct {
@@ -161,7 +163,9 @@ func NewStore(dir, admin string) (*Store, error) {
 	} else if !os.IsNotExist(e) {
 		return nil, e
 	}
+	upgraded := false
 	if s.state.Hourly == nil {
+		upgraded = true
 		s.state.Hourly = map[string]DailyUsage{}
 		// Upgrade existing metadata so Today includes already-recorded usage.
 		for _, r := range s.state.Requests {
@@ -169,10 +173,20 @@ func NewStore(dir, admin string) (*Store, error) {
 				s.state.addHourly(r.At, r.Provider, *r.Tokens, *r.Cost)
 			}
 		}
-		if e == nil {
-			if err := s.change(func(*diskState) error { return nil }); err != nil {
-				return nil, err
+	}
+	if s.state.KeyUsage == nil {
+		upgraded = true
+		s.state.KeyUsage = map[string]UsageTotals{}
+		// Older versions only retained per-key attribution in request metadata.
+		for _, r := range s.state.Requests {
+			if r.KeyID != "" && r.Tokens != nil && r.Cost != nil {
+				s.state.addKeyUsage(r.KeyID, *r.Tokens, *r.Cost)
 			}
+		}
+	}
+	if upgraded && e == nil {
+		if err := s.change(func(*diskState) error { return nil }); err != nil {
+			return nil, err
 		}
 	}
 	return s, nil

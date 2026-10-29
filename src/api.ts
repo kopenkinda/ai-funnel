@@ -4,6 +4,7 @@ import type {
   RequestLog,
   DailyUsage,
   Settings,
+  UsageTotals,
 } from "./types.ts";
 export type State = {
   connections: PublicConnection[];
@@ -12,6 +13,7 @@ export type State = {
   publicUrl: string;
   daily?: Record<string, DailyUsage>;
   hourly?: Record<string, DailyUsage>;
+  keyUsage?: Record<string, UsageTotals>;
   trackingAt?: string | null;
   settings?: Settings;
 };

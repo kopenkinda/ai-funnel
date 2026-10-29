@@ -14,6 +14,7 @@ export interface Account {
   name: string;
   email: string;
   plan: string;
+  planTier?: string;
   status: string;
   quotas: Quota[];
   quotaError?: string;
@@ -54,6 +55,7 @@ export interface PublicKey {
   name: string;
   prefix: string;
   enabled: boolean;
+  archivedAt?: string | null;
   expiresAt: string | null;
   dailyLimit: number | null;
   grants: Grant[];
@@ -106,14 +108,16 @@ export interface Cost {
   version?: string;
   note?: string;
 }
-export interface DailyUsage {
-  day: string;
-  hour?: string;
-  provider: string;
+export interface UsageTotals {
   tokens: Tokens;
   cost: Cost;
   requests: number;
   unpriced: number;
+}
+export interface DailyUsage extends UsageTotals {
+  day: string;
+  hour?: string;
+  provider: string;
 }
 export interface Settings {
   autoUseResets: boolean;

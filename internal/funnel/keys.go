@@ -37,6 +37,7 @@ func validateKey(k Key, connections map[string]Connection, accounts map[string]s
 func (a *App) updateKey(c *gin.Context, id string) {
 	var b struct {
 		Enabled    *bool           `json:"enabled"`
+		Archived   *bool           `json:"archived"`
 		Name       *string         `json:"name"`
 		Grants     *[]Grant        `json:"grants"`
 		ExpiresAt  json.RawMessage `json:"expiresAt"`
@@ -45,7 +46,7 @@ func (a *App) updateKey(c *gin.Context, id string) {
 	if !decode(c, &b) {
 		return
 	}
-	if b.Enabled == nil && b.Name == nil && b.Grants == nil && b.ExpiresAt == nil && b.DailyLimit == nil {
+	if b.Enabled == nil && b.Archived == nil && b.Name == nil && b.Grants == nil && b.ExpiresAt == nil && b.DailyLimit == nil {
 		fail(c, 400, "Supply key settings to update.")
 		return
 	}
@@ -57,6 +58,9 @@ func (a *App) updateKey(c *gin.Context, id string) {
 		if !ok {
 			status = 404
 			return fmt.Errorf("Key not found.")
+		}
+		if k.ArchivedAt != nil && b.Enabled != nil && *b.Enabled {
+			return fmt.Errorf("Restore this key before enabling it.")
 		}
 		if b.Enabled != nil {
 			k.Enabled = *b.Enabled
@@ -78,6 +82,18 @@ func (a *App) updateKey(c *gin.Context, id string) {
 		if b.DailyLimit != nil {
 			if err := json.Unmarshal(b.DailyLimit, &k.DailyLimit); err != nil {
 				return fmt.Errorf("Supply a valid request limit.")
+			}
+		}
+		if b.Archived != nil {
+			if *b.Archived {
+				if k.ArchivedAt == nil {
+					t := now()
+					k.ArchivedAt = &t
+				}
+				k.Enabled = false
+			} else if k.ArchivedAt != nil {
+				k.ArchivedAt = nil
+				k.Enabled = false
 			}
 		}
 		// A pause remains available even after an assigned connection was removed.
