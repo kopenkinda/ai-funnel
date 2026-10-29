@@ -240,7 +240,14 @@ export function ActivityLog({
             label="API key"
             value={filters.key}
             onChange={(v) => filter("key", v)}
-            options={keys.map((k) => ({ value: k.id, label: k.name }))}
+            options={[
+              ...keys.filter((k) => !k.archivedAt),
+              ...keys.filter((k) => k.archivedAt),
+            ].map((k) => ({
+              value: k.id,
+              label: k.name,
+              group: k.archivedAt ? "Archived" : "Active",
+            }))}
           />
         )}
         <FilterSelect
@@ -537,7 +544,12 @@ function FilterSelect({
     <SelectItem
       key={o.value}
       value={o.value}
-      title={privacy && o.label.includes("@") ? undefined : o.label}
+      // Only names long enough to hit the menu's max width get a hover title.
+      title={
+        o.label.length < 40 || (privacy && o.label.includes("@"))
+          ? undefined
+          : o.label
+      }
       className="*:first:min-w-0 *:first:shrink"
     >
       <span className="truncate">
