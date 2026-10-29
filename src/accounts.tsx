@@ -81,8 +81,8 @@ export function AccountsTable({
                     >
                       <PrivateText>{account.email || account.name}</PrivateText>
                     </span>
-                    <AccountPlan
-                      account={account}
+                    <PlanBadge
+                      plan={account.planTier || account.plan}
                       provider={connection.provider}
                     />
                   </div>
@@ -316,16 +316,14 @@ function AccountStatus({
   );
 }
 
-function AccountPlan({
-  account,
+export function PlanBadge({
+  plan: raw,
   provider,
 }: {
-  account: Account;
+  plan: string;
   provider: Provider;
 }) {
-  const plan = (account.planTier || account.plan)
-    .toLowerCase()
-    .replace(/[\s_-]+/g, "");
+  const plan = raw.toLowerCase().replace(/[\s_-]+/g, "");
   const free = [
     "free",
     "freeworkspace",
@@ -363,7 +361,7 @@ function AccountPlan({
     ? "Free"
     : tier
       ? `${tier[0]} · ${tier[1]}×`
-      : sentenceCase(account.plan || account.planTier || "Unknown plan");
+      : sentenceCase(raw || "Unknown plan");
   return (
     <Tooltip>
       <TooltipTrigger

@@ -9,8 +9,9 @@ import {
 import { api } from "./api";
 import type { RequestLog, PublicConnection, PublicKey } from "./types";
 import { providerNames, providers, type Provider } from "./types";
-import { PrivateText } from "./privacy";
+import { PrivateText, usePrivacy } from "./privacy";
 import { Dialog, ErrorMessage, ProviderIcon } from "./ui";
+import { PlanBadge } from "./accounts";
 import { compact, costLabel, money, TokenBreakdown } from "./metrics";
 import {
   activityColumns,
@@ -150,6 +151,11 @@ export function ActivityLog({
     accounts.find((a) => a.id === r.accountId)?.name ||
     connections.find((c) => c.id === r.connectionId)?.name ||
     "Removed account";
+  // The live account knows its current tier; the log keeps the plan at request time.
+  const planOf = (r: RequestLog) => {
+    const account = accounts.find((a) => a.id === r.accountId);
+    return account?.planTier || account?.plan || r.plan || "";
+  };
   const keyName = (r: RequestLog) =>
     r.keyName || keys.find((k) => k.id === r.keyId)?.name || "Removed key";
   const providerOf = (r: RequestLog) =>
@@ -371,16 +377,12 @@ export function ActivityLog({
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {provider && <ProviderIcon provider={provider} small />}
-                        <div className="min-w-0">
-                          <p className="max-w-48 truncate">
-                            <PrivateText>{accountName(r)}</PrivateText>
-                          </p>
-                          {r.plan && (
-                            <p className="text-xs text-muted-foreground">
-                              {r.plan}
-                            </p>
-                          )}
-                        </div>
+                        <p className="max-w-48 truncate">
+                          <PrivateText>{accountName(r)}</PrivateText>
+                        </p>
+                        {provider && planOf(r) && (
+                          <PlanBadge plan={planOf(r)} provider={provider} />
+                        )}
                       </div>
                     </TableCell>
                     {show("key") && (
@@ -525,14 +527,22 @@ function FilterSelect({
   options: Option[];
   onChange: (value: string) => void;
 }) {
+  const privacy = usePrivacy((state) => state.enabled);
   const unique = options.filter(
     (o, i, all) => all.findIndex((x) => x.value === o.value) === i,
   );
   const groups = [...new Set(unique.map((o) => o.group))];
   const selected = unique.find((o) => o.value === value);
   const item = (o: Option) => (
-    <SelectItem key={o.value} value={o.value}>
-      <PrivateText>{o.label}</PrivateText>
+    <SelectItem
+      key={o.value}
+      value={o.value}
+      title={privacy && o.label.includes("@") ? undefined : o.label}
+      className="*:first:min-w-0 *:first:shrink"
+    >
+      <span className="truncate">
+        <PrivateText>{o.label}</PrivateText>
+      </span>
     </SelectItem>
   );
   return (
@@ -560,7 +570,11 @@ function FilterSelect({
           )}
         </SelectValue>
       </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false} align="start">
+      <SelectContent
+        alignItemWithTrigger={false}
+        align="start"
+        className="w-max max-w-[min(24rem,var(--available-width))] min-w-(--anchor-width)"
+      >
         <SelectGroup>
           <SelectItem value="all">
             Any {label === "API key" ? label : label.toLowerCase()}
