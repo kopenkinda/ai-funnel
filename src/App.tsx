@@ -264,7 +264,11 @@ function Dashboard({ tab }: { tab: Tab }) {
             </Alert>
           )}
           {tab === "pool" && (
-            <UsageMetrics daily={state.daily} hourly={state.hourly} />
+            <UsageMetrics
+              daily={state.daily}
+              hourly={state.hourly}
+              connections={connected}
+            />
           )}
           {tab === "pool" &&
             (connected.length ? (

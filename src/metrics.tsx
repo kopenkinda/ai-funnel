@@ -1,6 +1,16 @@
 import { useState } from "react";
 import { Area, AreaChart, XAxis } from "recharts";
-import type { DailyUsage, Tokens, Cost } from "./types";
+import {
+  providerNames,
+  providers,
+  type DailyUsage,
+  type Tokens,
+  type Cost,
+  type Provider,
+  type PublicConnection,
+} from "./types";
+import { ProviderIcon } from "./ui.tsx";
+import { ResetTimeline } from "./timeline.tsx";
 import {
   Card,
   CardHeader,
@@ -93,6 +103,7 @@ function usageRows(
   period: Period,
   daily: Record<string, DailyUsage> = {},
   hourly: Record<string, DailyUsage> = {},
+  include: (provider: string) => boolean = () => true,
 ) {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
@@ -147,6 +158,7 @@ function usageRows(
     else date.setUTCDate(date.getUTCDate() + 1);
   }
   for (const value of Object.values((isHourly ? hourly : daily) ?? {})) {
+    if (!include(value.provider)) continue;
     const date = new Date(isHourly ? (value.hour ?? "") : value.day);
     if (Number.isNaN(date.getTime()) || date < start || date > end) continue;
     const row = rows.get(key(date));
@@ -204,12 +216,25 @@ export function TokenBreakdown({ tokens }: { tokens: Tokens }) {
 export function UsageMetrics({
   daily,
   hourly,
+  connections,
 }: {
   daily?: Record<string, DailyUsage>;
   hourly?: Record<string, DailyUsage>;
+  connections: PublicConnection[];
 }) {
   const [period, setPeriod] = useState<Period>("7d");
-  const { rows, isHourly, monthly } = usageRows(period, daily, hourly);
+  const [selected, setSelected] = useState<Provider[]>([]);
+  const connected = providers.filter((p) =>
+    connections.some((c) => c.provider === p),
+  );
+  // No provider selected means no filter.
+  const active = selected.filter((p) => connected.includes(p));
+  const shown = (provider: string) =>
+    !active.length || active.includes(provider as Provider);
+  const { rows, isHourly, monthly } = usageRows(period, daily, hourly, shown);
+  const scope = [periods[period], ...active.map((p) => providerNames[p])].join(
+    " · ",
+  );
   const dateLabel = (at: number, detailed = false) =>
     new Date(at).toLocaleString(undefined, {
       timeZone: "UTC",
@@ -250,28 +275,56 @@ export function UsageMetrics({
       aria-label="API usage summary"
       className="grid min-w-0 gap-3 sm:grid-cols-2"
     >
-      <ToggleGroup
-        aria-label="Usage period"
-        value={[period]}
-        onValueChange={(value) => {
-          if (value[0]) setPeriod(value[0] as Period);
-        }}
-        size="sm"
-        spacing={0}
-        className="justify-self-end rounded-full bg-muted/50 p-1 sm:col-span-2"
-      >
-        {Object.entries(periods).map(([value, label]) => (
-          <ToggleGroupItem key={value} value={value}>
-            {label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:col-span-2">
+        <ResetTimeline
+          connections={connections.filter((c) => shown(c.provider))}
+        />
+        {connected.length > 1 && (
+          <ToggleGroup
+            aria-label="Providers"
+            multiple
+            value={active}
+            onValueChange={(value) => setSelected(value as Provider[])}
+            size="sm"
+            spacing={0}
+            className="rounded-full bg-muted/50 p-1"
+          >
+            {connected.map((provider) => (
+              <ToggleGroupItem
+                key={provider}
+                value={provider}
+                aria-label={providerNames[provider]}
+                title={providerNames[provider]}
+                className="w-8 px-0"
+              >
+                <ProviderIcon provider={provider} small />
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        )}
+        <ToggleGroup
+          aria-label="Usage period"
+          value={[period]}
+          onValueChange={(value) => {
+            if (value[0]) setPeriod(value[0] as Period);
+          }}
+          size="sm"
+          spacing={0}
+          className="rounded-full bg-muted/50 p-1"
+        >
+          {Object.entries(periods).map(([value, label]) => (
+            <ToggleGroupItem key={value} value={value}>
+              {label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
       {["tokens", "cost"].map((kind) => (
         <Card key={kind} size="sm" className="gap-2 py-3">
           <CardHeader>
             <CardTitle>
               {kind === "tokens" ? "Tokens" : "Estimated API cost"}{" "}
-              <span className="text-muted-foreground">· {periods[period]}</span>
+              <span className="text-muted-foreground">· {scope}</span>
             </CardTitle>
             <CardDescription>
               {kind === "tokens"

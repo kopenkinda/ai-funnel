@@ -1160,3 +1160,148 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
     fullPage: true,
   });
 });
+
+test("usage summary filters by provider and maps upcoming resets", async ({
+  page,
+}) => {
+  const at = (hours: number) =>
+    new Date(Date.now() + hours * 3600000).toISOString();
+  const account = (id: string, quotas: unknown[], items: unknown[] = []) => ({
+    id,
+    name: `${id}@example.com`,
+    email: `${id}@example.com`,
+    plan: "Plus",
+    status: "active",
+    quotas,
+    resetCredits: { available: items.length, applicable: 0, items },
+  });
+  const connection = {
+    enabled: true,
+    models: [],
+    syncedAt: null,
+    error: null,
+    createdAt: new Date().toISOString(),
+    hasApiKey: true,
+    hasManagementAccess: true,
+  };
+  const hour = new Date();
+  hour.setUTCMinutes(0, 0, 0);
+  const usage = (provider: string, total: number) => ({
+    day: hour.toISOString().slice(0, 10),
+    hour: hour.toISOString(),
+    provider,
+    requests: 1,
+    unpriced: 0,
+    tokens: {
+      input: total,
+      cacheRead: 0,
+      cacheWrite: 0,
+      output: 0,
+      reasoning: 0,
+      unclassified: 0,
+      total,
+    },
+    cost: {
+      min: 0,
+      max: 0,
+      input: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      output: 0,
+      reasoning: 0,
+      priced: true,
+    },
+  });
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/api/state", (route) =>
+    route.fulfill({
+      json: {
+        keys: [],
+        requests: [],
+        publicUrl: "",
+        daily: {},
+        hourly: {
+          codex: usage("codex", 1000),
+          claude: usage("claude", 3000),
+        },
+        connections: [
+          {
+            ...connection,
+            id: "codex",
+            provider: "codex",
+            name: "Codex",
+            accounts: [
+              account("a", [
+                { label: "5h", remaining: 60, resetsAt: at(1.5) },
+                { label: "7d", remaining: 60, resetsAt: at(140) },
+              ]),
+            ],
+          },
+          {
+            ...connection,
+            id: "claude",
+            provider: "claude",
+            name: "Claude",
+            accounts: [
+              account(
+                "b",
+                [
+                  { label: "5h", remaining: 60, resetsAt: at(1.6) },
+                  { label: "Fable 7d", remaining: 60, resetsAt: at(9) },
+                  { label: "30d", remaining: 60, resetsAt: at(15) },
+                ],
+                [
+                  {
+                    id: "x",
+                    status: "available",
+                    resets_left: 1,
+                    expires_at: at(6),
+                  },
+                ],
+              ),
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Today" }).click();
+  const summary = page.getByRole("region", { name: "API usage summary" });
+  const timeline = summary.getByRole("group", {
+    name: "Resets in the next 22 hours",
+  });
+  await expect(
+    timeline
+      .getByRole("button")
+      .evaluateAll((marks) =>
+        marks.map((mark) => mark.getAttribute("aria-label")!.split(" at ")[0]),
+      ),
+  ).resolves.toEqual([
+    "5-hour reset",
+    "Banked reset expires",
+    "Weekly reset",
+    "Monthly reset",
+  ]);
+  await expect(
+    timeline.getByRole("button", { name: /^5-hour reset/ }),
+  ).toHaveAccessibleName(/2 accounts$/);
+  const tokens = summary.getByRole("button", { name: "Token breakdown" });
+  await expect(tokens).toHaveText("4K");
+  await summary.getByRole("button", { name: "Claude" }).click();
+  await expect(tokens).toHaveText("3K");
+  await expect(summary.getByText("Today · Claude").first()).toBeVisible();
+  await expect(
+    timeline.getByRole("button", { name: /^5-hour reset/ }),
+  ).toHaveAccessibleName(/1 account$/);
+  await summary.getByRole("button", { name: "Codex" }).click();
+  await expect(tokens).toHaveText("4K");
+  await summary.getByRole("button", { name: "Claude" }).click();
+  await expect(tokens).toHaveText("1K");
+  await expect(timeline.getByRole("button")).toHaveCount(1);
+  await summary.getByRole("button", { name: "Codex" }).click();
+  await expect(tokens).toHaveText("4K");
+  await expect(timeline.getByRole("button")).toHaveCount(4);
+});
