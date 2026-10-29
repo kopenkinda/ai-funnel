@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import { Menu } from "@base-ui/react/menu";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
@@ -52,6 +53,16 @@ interface Result {
   pages: number;
   models: string[];
 }
+// Filters and page live in the URL so a refresh or shared link keeps them.
+const filterKeys = [
+  "q",
+  "provider",
+  "account",
+  "key",
+  "model",
+  "transport",
+  "status",
+] as const;
 interface Option {
   value: string;
   label: string;
@@ -100,8 +111,32 @@ export function ActivityLog({
   const hourCycle = useHourCycle();
   const columns = usePreferences((state) => state.columns);
   const setColumns = usePreferences((state) => state.setColumns);
-  const [filters, setFilters] = useState<Record<string, string>>({});
-  const [page, setPage] = useState(1);
+  const [params, setParams] = useSearchParams();
+  const show = (column: ActivityColumn) => columns.includes(column);
+  const filters: Record<string, string> = {};
+  for (const k of filterKeys) {
+    const v = params.get(k);
+    // A hidden column's filter has no visible control, so it does not apply.
+    if (v && !((k === "key" || k === "transport") && !show(k))) filters[k] = v;
+  }
+  const page = Math.max(1, Math.floor(Number(params.get("page"))) || 1);
+  const query = new URLSearchParams({
+    ...filters,
+    page: String(page),
+  }).toString();
+  function update(changes: Record<string, string>) {
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [k, v] of Object.entries(changes))
+          if (v) next.set(k, v);
+          else next.delete(k);
+        return next;
+      },
+      { replace: true },
+    );
+  }
+  const setPage = (n: number) => update({ page: n > 1 ? String(n) : "" });
   const [result, setResult] = useState<Result>({
     items: [],
     total: 0,
@@ -116,7 +151,6 @@ export function ActivityLog({
     let active = true;
     const timer = setTimeout(() => {
       setLoading(true);
-      const query = new URLSearchParams({ ...filters, page: String(page) });
       api<Result>(`/requests?${query}`)
         .then((r) => {
           if (active) {
@@ -135,15 +169,13 @@ export function ActivityLog({
       active = false;
       clearTimeout(timer);
     };
-  }, [filters, page, refreshId]);
+  }, [query, refreshId]);
   const accounts = connections.flatMap((c) => c.accounts);
   const connected = providers.filter((p) =>
     connections.some((c) => c.provider === p),
   );
-  const show = (column: ActivityColumn) => columns.includes(column);
   function filter(key: string, value: string) {
-    setPage(1);
-    setFilters((f) => ({ ...f, [key]: value }));
+    update({ [key]: value, page: "" });
   }
   const filtered = Object.entries(filters).some(([k, v]) => k !== "q" && v);
   const accountName = (r: RequestLog) =>
@@ -188,21 +220,20 @@ export function ActivityLog({
             value={filters.provider ? [filters.provider] : []}
             onValueChange={(value) => {
               const provider = value[0] ?? "";
-              setPage(1);
-              setFilters((f) => ({
-                ...f,
+              update({
                 provider,
+                page: "",
                 // An account from the other provider would match nothing.
                 account:
                   provider &&
                   !connections.some(
                     (c) =>
                       c.provider === provider &&
-                      c.accounts.some((a) => a.id === f.account),
+                      c.accounts.some((a) => a.id === filters.account),
                   )
                     ? ""
-                    : (f.account ?? ""),
-              }));
+                    : (filters.account ?? ""),
+              });
             }}
             size="sm"
             spacing={0}
@@ -278,10 +309,16 @@ export function ActivityLog({
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => {
-              setFilters((f) => ({ q: f.q ?? "" }));
-              setPage(1);
-            }}
+            onClick={() =>
+              update(
+                Object.fromEntries(
+                  [...filterKeys, "page"].map((k) => [
+                    k,
+                    k === "q" ? (filters.q ?? "") : "",
+                  ]),
+                ),
+              )
+            }
           >
             Clear filters
           </Button>

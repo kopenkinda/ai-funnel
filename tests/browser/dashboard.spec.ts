@@ -1179,6 +1179,12 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
   );
   await page.getByLabel("Search requests").fill("request-fixture");
   await expect.poll(() => queries.at(-1)).toContain("q=request-fixture");
+  await expect(page).toHaveURL(/[?&]q=request-fixture/);
+  await page.reload();
+  await expect(page.getByLabel("Search requests")).toHaveValue(
+    "request-fixture",
+  );
+  await expect.poll(() => queries.at(-1)).toContain("q=request-fixture");
   await page.getByRole("button", { name: "Details", exact: true }).click();
   await expect(
     page.getByRole("dialog", { name: "Request details" }),
