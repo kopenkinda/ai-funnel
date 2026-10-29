@@ -1,6 +1,19 @@
 import { useEffect, useState } from "react";
-import { providerNames, type PublicConnection } from "./types.ts";
+import { HugeiconsIcon as Icon } from "@hugeicons/react";
+import {
+  Calendar03Icon,
+  Calendar04Icon,
+  Clock01Icon,
+  TimerResetIcon,
+} from "@hugeicons/core-free-icons";
+import {
+  providerNames,
+  providers,
+  type Provider,
+  type PublicConnection,
+} from "./types.ts";
 import { PrivateText } from "./privacy.tsx";
+import { ProviderIcon } from "./ui.tsx";
 import { usePreferences } from "./preferences.ts";
 import { cn } from "@/lib/utils";
 import {
@@ -16,16 +29,21 @@ const SPAN = 24 * HOUR;
 const MERGE = 20 * 60_000;
 
 type Kind = "5h" | "weekly" | "monthly" | "banked";
-const kinds: Record<Kind, { name: string; mark: string }> = {
-  "5h": { name: "5-hour reset", mark: "size-2 rounded-full bg-foreground" },
-  weekly: {
-    name: "Weekly reset",
-    mark: "size-2 rotate-45 rounded-[2px] bg-chart-1",
+const kinds: Record<
+  Kind,
+  { name: string; icon: typeof Clock01Icon; color: string }
+> = {
+  "5h": { name: "5-hour reset", icon: Clock01Icon, color: "text-foreground" },
+  weekly: { name: "Weekly reset", icon: Calendar03Icon, color: "text-chart-1" },
+  monthly: {
+    name: "Monthly reset",
+    icon: Calendar04Icon,
+    color: "text-chart-4",
   },
-  monthly: { name: "Monthly reset", mark: "h-4 w-1 rounded-full bg-chart-4" },
   banked: {
     name: "Banked reset expires",
-    mark: "size-2.5 rounded-full border-2 border-warning",
+    icon: TimerResetIcon,
+    color: "text-warning",
   },
 };
 
@@ -41,11 +59,17 @@ const kindOf = (label: string): Kind | null =>
 interface Event {
   kind: Kind;
   at: number;
-  who: { account: string; detail: string }[];
+  who: { provider: Provider; account: string; detail: string }[];
 }
 
 function events(connections: PublicConnection[], start: number, end: number) {
-  const raw: { kind: Kind; at: number; account: string; detail: string }[] = [];
+  const raw: {
+    kind: Kind;
+    at: number;
+    provider: Provider;
+    account: string;
+    detail: string;
+  }[] = [];
   for (const connection of connections)
     for (const account of connection.accounts) {
       const name = account.email || account.name;
@@ -57,6 +81,7 @@ function events(connections: PublicConnection[], start: number, end: number) {
           raw.push({
             kind,
             at,
+            provider: connection.provider,
             account: name,
             detail:
               `${provider} ${quota.label.replace(/^(5h|7d|30d|Monthly)$| (5h|7d)$/, "")}`.trim(),
@@ -70,7 +95,13 @@ function events(connections: PublicConnection[], start: number, end: number) {
           at >= start &&
           at <= end
         )
-          raw.push({ kind: "banked", at, account: name, detail: provider });
+          raw.push({
+            kind: "banked",
+            at,
+            provider: connection.provider,
+            account: name,
+            detail: provider,
+          });
       }
     }
   const merged: Event[] = [];
@@ -78,7 +109,11 @@ function events(connections: PublicConnection[], start: number, end: number) {
     const last = merged.findLast(
       (e) => e.kind === item.kind && item.at - e.at <= MERGE,
     );
-    const who = { account: item.account, detail: item.detail };
+    const who = {
+      provider: item.provider,
+      account: item.account,
+      detail: item.detail,
+    };
     if (last) last.who.push(who);
     else merged.push({ kind: item.kind, at: item.at, who: [who] });
   }
@@ -151,8 +186,11 @@ export function ResetTimeline({
           style={{ left: x(now) }}
         />
         {list.map((event) => {
-          const { name, mark } = kinds[event.kind];
+          const { name, icon, color } = kinds[event.kind];
           const count = event.who.length;
+          const sources = providers.filter((p) =>
+            event.who.some((who) => who.provider === p),
+          );
           return (
             <Tooltip key={`${event.kind}/${event.at}`}>
               <TooltipTrigger
@@ -160,25 +198,46 @@ export function ResetTimeline({
                   <button
                     type="button"
                     aria-label={`${name} at ${clock(event.at, hour12)}, ${count} ${count === 1 ? "account" : "accounts"}`}
-                    className="absolute top-[38%] flex size-5 -translate-1/2 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="absolute top-[11px] flex h-4.5 -translate-1/2 items-center gap-1 rounded-full bg-background py-0.5 pr-1.5 pl-1 shadow-[0_0_0_1px_var(--color-border)] outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     style={{ left: x(event.at) }}
                   />
                 }
               >
-                <span className={mark} />
+                <span className="flex gap-0.5">
+                  {sources.map((provider) => (
+                    <ProviderIcon
+                      key={provider}
+                      provider={provider}
+                      className="size-3.5"
+                    />
+                  ))}
+                </span>
+                <Icon
+                  icon={icon}
+                  strokeWidth={2}
+                  className={cn("size-3", color)}
+                />
               </TooltipTrigger>
               <TooltipContent side="bottom">
                 <div className="flex flex-col gap-1.5 py-1">
                   <p className="flex items-center gap-2 font-medium">
-                    <span className="flex size-3 items-center justify-center">
-                      <span className={mark} />
-                    </span>
+                    <Icon
+                      icon={icon}
+                      strokeWidth={2}
+                      className={cn("size-3.5", color)}
+                    />
                     {name} at {clock(event.at, hour12)}
                   </p>
                   <ul className="flex flex-col gap-1">
                     {event.who.map((who, index) => (
                       <li key={index} className="flex justify-between gap-6">
-                        <PrivateText>{who.account}</PrivateText>
+                        <span className="flex items-center gap-1.5">
+                          <ProviderIcon
+                            provider={who.provider}
+                            className="size-3.5"
+                          />
+                          <PrivateText>{who.account}</PrivateText>
+                        </span>
                         <span className="text-muted-foreground">
                           {who.detail}
                         </span>

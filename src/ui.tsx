@@ -21,9 +21,11 @@ import {
 export function ProviderIcon({
   provider,
   small = false,
+  className,
 }: {
   provider: Provider;
   small?: boolean;
+  className?: string;
 }) {
   return (
     <span
@@ -31,6 +33,7 @@ export function ProviderIcon({
       className={cn(
         "inline-flex shrink-0 items-center justify-center",
         small ? "size-5" : "size-7",
+        className,
       )}
     >
       {provider === "claude" ? (
