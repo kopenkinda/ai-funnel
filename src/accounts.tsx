@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
+import { Progress as ProgressPrimitive } from "@base-ui/react/progress";
 import {
-  Clock01Icon,
   CreditCardIcon,
   MoneyNotFound04Icon,
   MultiplicationSignIcon,
@@ -12,12 +12,12 @@ import {
   type Account,
   type Provider,
   type PublicConnection,
+  type Quota,
 } from "./types.ts";
 import { timeUntil } from "./api.ts";
 import { PrivateText, usePrivacy } from "./privacy.tsx";
 import { cn, compareQuotaLabels } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
@@ -89,47 +89,16 @@ export function AccountsTable({
                 </div>
               </TableCell>
               <TableCell>
-                <div className="flex flex-col gap-1.5">
+                <div className="grid grid-cols-[4.5rem_minmax(4rem,1fr)_2.75rem_4.5rem] items-center gap-x-3 gap-y-2">
                   {account.quotas
                     .filter((q) => q.remaining !== null)
                     .sort((a, b) => compareQuotaLabels(a.label, b.label))
                     .map((quota, index) => (
-                      <div
+                      <QuotaRow
                         key={`${quota.label}/${index}`}
-                        className="grid grid-cols-[minmax(2.75rem,auto)_2.5rem_3rem_1fr] items-center gap-2"
-                      >
-                        <span className="text-xs text-muted-foreground">
-                          {quota.label === "7d"
-                            ? "Weekly"
-                            : quota.label === "30d"
-                              ? "Monthly"
-                              : quota.label}
-                        </span>
-                        <span className="text-right text-xs tabular-nums">
-                          {Math.round(quota.remaining!)}%
-                        </span>
-                        <Progress
-                          className="[&_[data-slot=progress-track]]:h-1.5"
-                          value={quota.remaining!}
-                          tone={
-                            quota.remaining! < 20
-                              ? "destructive"
-                              : quota.remaining! < 80
-                                ? "warning"
-                                : "success"
-                          }
-                          aria-label={`${privacy ? "Account" : account.name} ${quota.label} remaining`}
-                        />
-                        {quota.resetsAt && (
-                          <span
-                            className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                            title={new Date(quota.resetsAt).toLocaleString()}
-                          >
-                            <Icon icon={Clock01Icon} size={14} />
-                            {timeUntil(quota.resetsAt).replace(/^Resets /, "")}
-                          </span>
-                        )}
-                      </div>
+                        quota={quota}
+                        name={privacy ? "Account" : account.name}
+                      />
                     ))}
                 </div>
               </TableCell>
@@ -145,6 +114,105 @@ export function AccountsTable({
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+const windowHours = (label: string) => {
+  if (label === "30d" || label === "Monthly") return 30 * 24;
+  const match = /(\d+)([hd])$/.exec(label);
+  return match ? Number(match[1]) * (match[2] === "d" ? 24 : 1) : null;
+};
+
+function QuotaRow({ quota, name }: { quota: Quota; name: string }) {
+  const remaining = quota.remaining!;
+  const hours = windowHours(quota.label);
+  // Share of the window still ahead: what remains if usage were spread evenly.
+  const pace =
+    hours && quota.resetsAt
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            ((Date.parse(quota.resetsAt) - Date.now()) / (hours * 3_600_000)) *
+              100,
+          ),
+        )
+      : null;
+  const tone =
+    remaining < 10 || (pace !== null && remaining < pace / 2)
+      ? "destructive"
+      : pace !== null
+        ? remaining < pace - 10
+          ? "warning"
+          : null
+        : remaining < 20
+          ? "destructive"
+          : remaining < 50
+            ? "warning"
+            : null;
+  const reset = quota.resetsAt ? timeUntil(quota.resetsAt) : null;
+  const label =
+    quota.label === "7d"
+      ? "Weekly"
+      : quota.label === "30d"
+        ? "Monthly"
+        : quota.label;
+  return (
+    <>
+      <span className="truncate text-xs text-muted-foreground" title={label}>
+        {label}
+      </span>
+      <ProgressPrimitive.Root
+        value={remaining}
+        aria-label={`${name} ${quota.label} remaining`}
+        title={
+          pace === null
+            ? undefined
+            : `Even pace would leave ${Math.round(pace)}% now`
+        }
+        className="relative h-2.5"
+      >
+        <ProgressPrimitive.Track className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-muted">
+          <ProgressPrimitive.Indicator
+            className={cn(
+              "h-full rounded-full transition-[width,background-color]",
+              tone === "destructive"
+                ? "bg-destructive"
+                : tone === "warning"
+                  ? "bg-warning"
+                  : "bg-foreground/70",
+            )}
+          />
+        </ProgressPrimitive.Track>
+        {pace !== null && (
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-0 w-0.5 -translate-x-1/2 rounded-full bg-foreground shadow-[0_0_0_1.5px_var(--background)]"
+            style={{ left: `${pace}%` }}
+          />
+        )}
+      </ProgressPrimitive.Root>
+      <span
+        className={cn(
+          "text-right text-xs font-medium tabular-nums",
+          tone === "destructive"
+            ? "text-destructive"
+            : tone === "warning"
+              ? "text-warning"
+              : undefined,
+        )}
+      >
+        {Math.round(remaining)}%
+      </span>
+      <span
+        className="text-xs text-muted-foreground tabular-nums"
+        title={
+          quota.resetsAt ? new Date(quota.resetsAt).toLocaleString() : undefined
+        }
+      >
+        {reset?.startsWith("Resets in ") ? reset.slice(10) : reset && "Now"}
+      </span>
+    </>
   );
 }
 
