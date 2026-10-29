@@ -191,6 +191,32 @@ func (a *App) dashboard(c *gin.Context) {
 		c.JSON(200, gin.H{"autoUseResets": b.AutoUseResets})
 		return
 	}
+	if provider, ok := strings.CutPrefix(p, "routing/"); ok && m == "PUT" {
+		if provider != "codex" && provider != "claude" {
+			fail(c, 404, "Provider not found.")
+			return
+		}
+		var b Routing
+		if !decode(c, &b) {
+			return
+		}
+		b, message := a.validRouting(provider, b)
+		if message != "" {
+			fail(c, 400, message)
+			return
+		}
+		if !a.save(c, func(d *diskState) error {
+			if d.Settings.Routing == nil {
+				d.Settings.Routing = map[string]Routing{}
+			}
+			d.Settings.Routing[provider] = b
+			return nil
+		}) {
+			return
+		}
+		c.JSON(200, b)
+		return
+	}
 	if p == "requests" && m == "GET" {
 		a.requestLogs(c)
 		return
@@ -441,5 +467,5 @@ func (a *App) state(c *gin.Context) {
 	for i, v := range logs {
 		reverse[len(logs)-1-i] = v
 	}
-	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL, "daily": d.Daily, "hourly": d.Hourly, "keyUsage": d.KeyUsage, "trackingAt": d.TrackingAt, "pricing": gin.H{"asOf": "2026-10-29", "openai": openAIPrices, "claude": claudePrices}, "settings": gin.H{"autoUseResets": d.Settings.AutoUseResets, "hasHubKey": d.Settings.HubTokenHash != ""}})
+	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL, "daily": d.Daily, "hourly": d.Hourly, "keyUsage": d.KeyUsage, "trackingAt": d.TrackingAt, "pricing": gin.H{"asOf": "2026-10-29", "openai": openAIPrices, "claude": claudePrices}, "settings": gin.H{"autoUseResets": d.Settings.AutoUseResets, "hasHubKey": d.Settings.HubTokenHash != "", "routing": gin.H{"codex": d.Settings.routing("codex"), "claude": d.Settings.routing("claude")}}})
 }

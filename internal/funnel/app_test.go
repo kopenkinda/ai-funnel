@@ -363,6 +363,69 @@ func TestEmbeddedService(t *testing.T) {
 			t.Fatal(capture.ids)
 		}
 	})
+	t.Run("routing settings validate, persist, and apply without restart", func(t *testing.T) {
+		reset := func() {
+			capture.mu.Lock()
+			capture.ids = nil
+			capture.mu.Unlock()
+		}
+		reset()
+		defer reset()
+		status, b := request("GET", "/api/state", admin, "")
+		if status != 200 || !strings.Contains(string(b), `"codex":{"strategy":"capacity_weighted","stickySessions":true,"preferEarlierReset":true,"resetWindow":"secondary","power":2,"topK":5}`) {
+			t.Fatalf("default routing: %d %s", status, b)
+		}
+		route := func(provider, strategy, account string, power float64) (int, []byte) {
+			return request("PUT", "/api/routing/"+provider, admin, fmt.Sprintf(`{"strategy":%q,"stickySessions":true,"preferEarlierReset":true,"resetWindow":"secondary","power":%g,"topK":5,"accountId":%q}`, strategy, power, account))
+		}
+		for _, invalid := range []struct {
+			provider, strategy, account string
+			power                       float64
+		}{{"codex", "random", "", 2}, {"codex", "relative_availability", "", 0}, {"codex", "single_account", "account-c", 2}, {"codex", "single_account", "missing", 2}, {"claude", "single_account", "account-a", 2}} {
+			if status, b := route(invalid.provider, invalid.strategy, invalid.account, invalid.power); status != 400 {
+				t.Fatalf("accepted %+v: %d %s", invalid, status, b)
+			}
+		}
+		if status, _ := route("zen", "round_robin", "", 2); status != 404 {
+			t.Fatal("unsupported provider accepted", status)
+		}
+		if status, b := route("codex", "single_account", "account-a", 2); status != 200 {
+			t.Fatalf("single account: %d %s", status, b)
+		}
+		if got := store.read().Settings.Routing["codex"]; got.Strategy != "single_account" || got.AccountID != "account-a" {
+			t.Fatalf("routing not persisted: %+v", got)
+		}
+		if status, b := request("POST", path, key, payload); status != 503 || !strings.Contains(string(b), "single routing account") {
+			t.Fatalf("key scoped to another account was rerouted: %d %s", status, b)
+		}
+		status, b = request("POST", "/api/keys", admin, `{"name":"All accounts","dailyLimit":null,"grants":[{"connectionId":"codex","accountIds":null,"models":null}]}`)
+		var all struct {
+			Token string `json:"token"`
+		}
+		if status != 201 || json.Unmarshal(b, &all) != nil {
+			t.Fatalf("key %d %s", status, b)
+		}
+		for range 3 {
+			if status, b := request("POST", path, all.Token, payload); status != 200 {
+				t.Fatalf("single account request: %d %s", status, b)
+			}
+		}
+		if status, b := route("codex", "round_robin", "ignored", 2); status != 200 || strings.Contains(string(b), "ignored") {
+			t.Fatalf("round robin: %d %s", status, b)
+		}
+		if status, b := request("POST", path, key, payload); status != 200 {
+			t.Fatalf("hot-applied routing: %d %s", status, b)
+		}
+		capture.mu.Lock()
+		selected := append([]string(nil), capture.ids...)
+		capture.mu.Unlock()
+		if !reflect.DeepEqual(selected, []string{"account-a", "account-a", "account-a", "account-b@example.com.json"}) {
+			t.Fatalf("routing selections: %v", selected)
+		}
+		if status, b := route("codex", "capacity_weighted", "", 2); status != 200 {
+			t.Fatalf("restore default: %d %s", status, b)
+		}
+	})
 	t.Run("subscription-only keys use funded accounts until subscription exhaustion on HTTP and WebSocket turns", func(t *testing.T) {
 		const available = `{"credits":{"has_credits":true,"balance":"123"},"rate_limit":{"primary_window":{"used_percent":99},"secondary_window":{"used_percent":50}}}`
 		const exhausted = `{"credits":{"has_credits":true,"balance":"123"},"rate_limit":{"allowed":true,"primary_window":{"used_percent":100},"secondary_window":{"used_percent":50}}}`

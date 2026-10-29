@@ -68,8 +68,9 @@ type RequestLog struct {
 	Reasoning         string    `json:"reasoning,omitempty"`
 }
 type Settings struct {
-	AutoUseResets bool   `json:"autoUseResets"`
-	HubTokenHash  string `json:"hubTokenHash,omitempty"`
+	AutoUseResets bool               `json:"autoUseResets"`
+	HubTokenHash  string             `json:"hubTokenHash,omitempty"`
+	Routing       map[string]Routing `json:"routing,omitempty"`
 }
 type diskState struct {
 	ResetAttempts map[string]ResetAttempt `json:"resetAttempts,omitempty"`
@@ -199,6 +200,19 @@ func (s *Store) read() diskState {
 	var d diskState
 	_ = json.Unmarshal(b, &d)
 	return d
+}
+
+// routingInputs avoids copying the whole state for every account selection.
+func (s *Store) routingInputs(provider string, ids []string) (Routing, map[string]Snapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snaps := make(map[string]Snapshot, len(ids))
+	for _, id := range ids {
+		if snap, ok := s.state.Snapshots[id]; ok {
+			snaps[id] = Snapshot{Plan: snap.Plan, PlanTier: snap.PlanTier, Quotas: append([]Quota(nil), snap.Quotas...), At: snap.At}
+		}
+	}
+	return s.state.Settings.routing(provider), snaps
 }
 func (s *Store) change(fn func(*diskState) error) error {
 	s.mu.Lock()

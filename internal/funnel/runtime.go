@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
@@ -37,6 +38,21 @@ type scope struct {
 type selector struct {
 	rr                    core.RoundRobinSelector
 	subscriptionAvailable func(context.Context, *core.Auth) bool
+	// inputs reads current routing settings and quota snapshots, so setting
+	// changes apply to the next selection without replacing the SDK selector.
+	inputs func(provider string, ids []string) (Routing, map[string]Snapshot)
+	now    func() time.Time
+	random func() float64
+	mu     sync.Mutex
+	last   map[string]time.Time
+	sticky map[string]*core.SessionAffinitySelector
+}
+
+func (s *selector) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return now()
 }
 
 func (s *selector) Pick(ctx context.Context, provider, model string, opts executor.Options, auths []*core.Auth) (*core.Auth, error) {
@@ -54,11 +70,31 @@ func (s *selector) Pick(ctx context.Context, provider, model string, opts execut
 			candidates = append(candidates, a)
 		}
 	}
+	route, snaps := defaultRouting(), map[string]Snapshot{}
+	if s.inputs != nil {
+		ids := make([]string, len(candidates))
+		for i, a := range candidates {
+			ids[i] = a.ID
+		}
+		route, snaps = s.inputs(allowed.provider, ids)
+	}
+	// Single-account routing never falls back to another account.
+	if route.Strategy == "single_account" {
+		pinned := candidates[:0]
+		for _, a := range candidates {
+			if a.ID == route.AccountID {
+				pinned = append(pinned, a)
+			}
+		}
+		if candidates = pinned; len(candidates) == 0 {
+			return nil, &core.Error{Code: "routing_account_unavailable", Message: "The single routing account is unavailable or not assigned to this key.", HTTPStatus: 503}
+		}
+	}
 	if !allowed.subscriptionOnly {
-		return s.rr.Pick(ctx, allowed.provider, model, opts, candidates)
+		return s.route(ctx, allowed.provider, model, opts, candidates, route, snaps)
 	}
 	for len(candidates) > 0 {
-		selected, err := s.rr.Pick(ctx, allowed.provider, model, opts, candidates)
+		selected, err := s.route(ctx, allowed.provider, model, opts, candidates, route, snaps)
 		if err != nil {
 			return nil, err
 		}
@@ -123,7 +159,7 @@ func NewRuntime(store *Store, host string, port int, publicURL, dist string, add
 	cfg.RequestLog = false
 	cfg.Codex.UpstreamRequestCompression = true
 	sdkauth.RegisterTokenStore(store)
-	selection := &selector{}
+	selection := &selector{inputs: store.routingInputs}
 	manager := core.NewManager(store, selection, nil)
 	a := &App{usageOwner: token(), store: store, core: manager, management: management, publicURL: strings.TrimRight(publicURL, "/"), dist: dist, failures: map[string][]int64{}, gate: make(chan struct{}, 1)}
 	selection.subscriptionAvailable = a.codexSubscriptionAvailable

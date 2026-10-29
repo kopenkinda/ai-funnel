@@ -573,6 +573,7 @@ function Dashboard({ tab }: { tab: Tab }) {
       {modal === "settings" && (
         <DashboardSettings
           settings={state.settings}
+          connections={connections}
           origin={origin}
           onSaved={reload}
           onClose={() => setModal(null)}

@@ -45,6 +45,27 @@ Account rows show plan multipliers and exceptional statuses. **Use reset** redee
 
 Model access uses the same provider catalog as native model discovery. Keep **All models** enabled for unrestricted model access, including future models. Disable it to select models from the searchable picker. Selected models appear above the picker and can be removed individually.
 
+## Account routing
+
+**Settings → Codex routing** and **Claude routing** choose how requests are spread across the accounts a key may use. Changes are saved encrypted and apply to the next selection without a restart. The default is **Capacity weighted** with sticky sessions and earlier-reset preference on the weekly window.
+
+| Strategy              | Selection                                                                                                                     |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Capacity weighted     | Random draw weighted by remaining weekly percentage times plan capacity.                                                      |
+| Relative availability | Weight is remaining capacity per second until the weekly reset, raised to the exponent (default 2), among the top 5 accounts. |
+| Usage weighted        | Lowest weekly usage, then lowest 5h usage, then the account used least recently.                                              |
+| Round robin           | Rotates through accounts in ID order.                                                                                         |
+| Fill first            | Highest 5h usage, then highest weekly usage, so one account drains before the next.                                           |
+| Sequential drain      | Smallest plan capacity first, then account ID.                                                                                |
+| Reset drain           | Nearest weekly reset by day, then most remaining 5h and weekly allowance.                                                     |
+| Single account        | Only the selected account. Requests fail if it is paused, removed, cooling down, or not assigned to the key.                  |
+
+Plan capacity follows the account badges: Codex Plus and Business 1, Pro 100 5, Pro 200 10, Pro 500 20; Claude Pro and Team 1, Max 5x 5, Max 20x 20. Free and unknown plans count as 1. Purchased credits and banked resets do not add capacity. **Prefer earlier reset** limits Capacity weighted, Usage weighted and Fill first to accounts whose selected window resets soonest, compared by whole day for the weekly window and whole hour for 5h.
+
+Routing reads the last quota refresh. Windows shorter than a day count as 5h, longer ones (weekly or monthly) as weekly; a plan with only a long window uses it for both. Model-specific windows, such as Codex Spark or Claude Opus weekly limits, apply only to matching models, and the most used matching window counts. Code review and extra-usage windows are ignored. A window whose reset time has passed counts as unused until the next refresh. Missing quota data counts as unused, so a failed or pending lookup never blocks requests. Accounts with an exhausted window are used only when every permitted account is exhausted, leaving purchased credits and extra usage as spillover.
+
+Sticky sessions use the client's session ID to keep a conversation on its account for cache locality. A binding is reused only while the account is still permitted for the key and model, enabled, not cooling down, and not exhausted while another account has allowance. Otherwise the request and its retries move to another permitted account and the session rebinds. **Subscription only** still checks each selected Codex account live and fails closed. Routing does not move a Codex WebSocket turn off the account its socket is pinned to; per-turn key and subscription checks still apply.
+
 ## Usage and request logs
 
 Usage graphs show token totals and estimated API-equivalent cost for Today, 7d, 30d, 90d, the past year or All time. Both graphs share the selected period and split uncached input, cache reads, cache writes, output and reasoning on hover. Dates use UTC, with hourly points for Today and monthly points for longer histories. The backend uses the SDK's non-overlapping token accounting. Daily aggregates persist independently of the 10,000 retained request records; recent hourly aggregates retain two days. Existing request metadata supplies hourly history on the first upgrade.

@@ -1349,3 +1349,68 @@ test("usage summary filters by provider and maps upcoming resets", async ({
   await page.reload();
   await expect(monthly).toHaveAccessibleName(/ at \d{2}:\d{2},/);
 });
+
+test("routing settings persist per provider and validate input", async ({
+  page,
+}) => {
+  await page.request.post("/api/session", {
+    data: { token: "browser-test-dashboard-key" },
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const strategy = page.getByRole("combobox", {
+    name: "Codex routing strategy",
+  });
+  await expect(strategy).toHaveText("Capacity weighted");
+  await expect(
+    page.getByRole("combobox", { name: "Claude routing strategy" }),
+  ).toHaveText("Capacity weighted");
+  const sticky = page.getByRole("checkbox", {
+    name: "Keep sessions on one account",
+  });
+  await expect(sticky).toHaveCount(2);
+  await expect(sticky.first()).toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: "Prefer earlier reset" }).first(),
+  ).toBeChecked();
+  await expect(
+    page
+      .getByRole("group", { name: "Codex reset window" })
+      .getByRole("button", { name: "Weekly" }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  await strategy.click();
+  await page.getByRole("option", { name: "Relative availability" }).click();
+  await expect(strategy).toHaveText("Relative availability");
+  await expect(
+    page.getByRole("checkbox", { name: "Prefer earlier reset" }),
+  ).toHaveCount(1);
+  const power = page.getByLabel("Weight exponent");
+  await expect(power).toHaveValue("2");
+  await expect(page.getByLabel("Top accounts")).toHaveValue("5");
+  await power.fill("0");
+  await power.blur();
+  await expect(page.getByRole("alert")).toContainText("Weight exponent");
+  await expect(power).toHaveValue("2");
+  await power.fill("3");
+  await power.blur();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+
+  await strategy.click();
+  await page.getByRole("option", { name: "Single account" }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Codex routing account" }),
+  ).toHaveText("Select account");
+  await expect(sticky).toHaveCount(1);
+
+  await page.reload();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(strategy).toHaveText("Relative availability");
+  await expect(power).toHaveValue("3");
+  await strategy.click();
+  await page.getByRole("option", { name: "Capacity weighted" }).click();
+  await expect(strategy).toHaveText("Capacity weighted");
+  await page.reload();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(strategy).toHaveText("Capacity weighted");
+});

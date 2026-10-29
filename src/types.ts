@@ -120,7 +120,28 @@ export interface DailyUsage extends UsageTotals {
   hour?: string;
   provider: string;
 }
+export const routingStrategies = {
+  capacity_weighted: "Capacity weighted",
+  relative_availability: "Relative availability",
+  usage_weighted: "Usage weighted",
+  round_robin: "Round robin",
+  fill_first: "Fill first",
+  sequential_drain: "Sequential drain",
+  reset_drain: "Reset drain",
+  single_account: "Single account",
+} as const;
+export type RoutingStrategy = keyof typeof routingStrategies;
+export interface Routing {
+  strategy: RoutingStrategy;
+  stickySessions: boolean;
+  preferEarlierReset: boolean;
+  resetWindow: "primary" | "secondary";
+  power: number;
+  topK: number;
+  accountId?: string;
+}
 export interface Settings {
   autoUseResets: boolean;
   hasHubKey: boolean;
+  routing?: Record<Provider, Routing>;
 }
