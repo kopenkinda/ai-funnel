@@ -417,12 +417,16 @@ test("key access can be edited, archived, and restored with the same credential"
   await expect(
     page.getByRole("button", { name: "Select Coding tools", exact: true }),
   ).toHaveCount(0);
+  const lifetimeCost = page.getByRole("region", {
+    name: "Lifetime cost by API key",
+  });
   await expect(
-    page
-      .getByRole("region", { name: "Lifetime cost by API key" })
-      .getByRole("listitem")
-      .filter({ hasText: "Coding tools" }),
-  ).toContainText("Archived");
+    lifetimeCost.getByRole("listitem").filter({ hasText: "Coding tools" }),
+  ).toBeHidden();
+  await lifetimeCost.getByRole("button", { name: /^Archived keys/ }).click();
+  await expect(
+    lifetimeCost.getByRole("listitem").filter({ hasText: "Coding tools" }),
+  ).toBeVisible();
   await page.reload();
   await page.getByRole("link", { name: "API keys", exact: true }).click();
   const filter = page.getByRole("group", { name: "Key status" });
@@ -574,8 +578,16 @@ test("lifetime key charts rank cost and tokens independently", async ({
     name: "Lifetime tokens by API key",
   });
   await expect(cost.getByRole("listitem").first()).toContainText("$6.00 · 75%");
-  await expect(tokens.getByRole("listitem").first()).toContainText("Terminal");
-  await expect(tokens.getByRole("listitem").first()).toContainText("3M · 75%");
+  // Terminal is archived: it keeps its share but sits in the collapsed group.
+  const archivedTokens = tokens.getByRole("button", { name: /^Archived keys/ });
+  await expect(archivedTokens).toContainText("3M · 75%");
+  await expect(
+    tokens.getByRole("listitem").filter({ hasText: "Terminal" }),
+  ).toBeHidden();
+  await archivedTokens.click();
+  await expect(
+    tokens.getByRole("listitem").filter({ hasText: "Terminal" }),
+  ).toContainText("3M · 75%");
   await expect(cost.getByText("Laptop@example.com", { exact: true })).toHaveCSS(
     "filter",
     /blur\(/,

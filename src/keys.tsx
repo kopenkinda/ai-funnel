@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useHourCycle } from "./preferences.ts";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
   Add01Icon,
   Archive01Icon,
   ArchiveRestoreIcon,
+  ArrowRight01Icon,
   Key01Icon,
 } from "@hugeicons/core-free-icons";
 import type { PublicConnection, PublicKey, UsageTotals } from "./types";
@@ -17,6 +18,11 @@ import { compact, costLabel, money } from "./metrics";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -315,64 +321,125 @@ export function KeyUsageSummary({
           kind === "cost"
             ? "Lifetime cost by API key"
             : "Lifetime tokens by API key";
+        const percent = (value: number) => {
+          const share = total > 0 ? (value / total) * 100 : 0;
+          return {
+            share,
+            text: `${approximate && share > 0 ? "≈" : ""}${share.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`,
+          };
+        };
+        const row = (
+          name: ReactNode,
+          label: string,
+          amount: number,
+          value: string,
+          title: string,
+        ) => {
+          const { share, text } = percent(amount);
+          return (
+            <>
+              <div className="flex min-w-0 items-baseline justify-between gap-4 text-sm">
+                <span className="flex min-w-0 items-center gap-2 font-medium">
+                  {name}
+                </span>
+                <span
+                  className="shrink-0 text-muted-foreground tabular-nums"
+                  title={title}
+                >
+                  {value}
+                  {value !== "Unpriced" && ` · ${text}`}
+                </span>
+              </div>
+              <Progress
+                value={share}
+                aria-label={`${label} ${kind} share`}
+                aria-valuetext={
+                  value === "Unpriced" ? value : `${value} · ${text}`
+                }
+                className="[&_[data-slot=progress-track]]:h-1.5"
+              />
+            </>
+          );
+        };
+        const item = (entry: (typeof entries)[number]) => (
+          <li key={entry.key.id} className="flex min-w-0 flex-col gap-2">
+            {row(
+              <span className="truncate">
+                <PrivateText>{entry.key.name}</PrivateText>
+              </span>,
+              entry.key.name,
+              entry[kind],
+              kind === "cost" ? costText(entry.totals) : compact(entry.tokens),
+              kind === "tokens"
+                ? entry.tokens.toLocaleString()
+                : entry.totals?.unpriced
+                  ? `${entry.totals.unpriced} unpriced requests`
+                  : "Estimated API equivalent · USD",
+            )}
+          </li>
+        );
+        const sorted = [...entries].sort((a, b) => b[kind] - a[kind]);
+        const archived = sorted.filter((entry) => entry.key.archivedAt);
+        const archivedTotals = archived.reduce<UsageTotals | undefined>(
+          (sum, { totals }) =>
+            !totals
+              ? sum
+              : !sum
+                ? totals
+                : {
+                    tokens: {
+                      ...sum.tokens,
+                      total: sum.tokens.total + totals.tokens.total,
+                    },
+                    cost: {
+                      ...sum.cost,
+                      min: sum.cost.min + totals.cost.min,
+                      max: sum.cost.max + totals.cost.max,
+                    },
+                    requests: sum.requests + totals.requests,
+                    unpriced: sum.unpriced + totals.unpriced,
+                  },
+          undefined,
+        );
         return (
           <Card key={kind} size="sm" role="region" aria-label={title}>
             <CardHeader>
               <CardTitle>{title}</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex min-w-0 flex-col gap-4">
               <ul className="flex min-w-0 flex-col gap-4">
-                {[...entries]
-                  .sort((a, b) => b[kind] - a[kind])
-                  .map((entry) => {
-                    const share = total > 0 ? (entry[kind] / total) * 100 : 0;
-                    const percentage = `${approximate && share > 0 ? "≈" : ""}${share.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
-                    const value =
-                      kind === "cost"
-                        ? costText(entry.totals)
-                        : compact(entry.tokens);
-                    return (
-                      <li
-                        key={entry.key.id}
-                        className="flex min-w-0 flex-col gap-2"
-                      >
-                        <div className="flex min-w-0 items-baseline justify-between gap-4 text-sm">
-                          <span className="flex min-w-0 items-center gap-2 font-medium">
-                            <span className="truncate">
-                              <PrivateText>{entry.key.name}</PrivateText>
-                            </span>
-                            {entry.key.archivedAt && (
-                              <Badge variant="secondary">Archived</Badge>
-                            )}
-                          </span>
-                          <span
-                            className="shrink-0 text-muted-foreground tabular-nums"
-                            title={
-                              kind === "tokens"
-                                ? entry.tokens.toLocaleString()
-                                : entry.totals?.unpriced
-                                  ? `${entry.totals.unpriced} unpriced requests`
-                                  : "Estimated API equivalent · USD"
-                            }
-                          >
-                            {value}
-                            {value !== "Unpriced" && ` · ${percentage}`}
-                          </span>
-                        </div>
-                        <Progress
-                          value={share}
-                          aria-label={`${entry.key.name} ${kind} share`}
-                          aria-valuetext={
-                            value === "Unpriced"
-                              ? value
-                              : `${value} · ${percentage}`
-                          }
-                          className="[&_[data-slot=progress-track]]:h-1.5"
-                        />
-                      </li>
-                    );
-                  })}
+                {sorted.filter((entry) => !entry.key.archivedAt).map(item)}
               </ul>
+              {archived.length > 0 && (
+                <Collapsible className="group/archived flex min-w-0 flex-col gap-4 border-t pt-4">
+                  <CollapsibleTrigger className="-mx-2 flex min-w-0 flex-col gap-2 rounded-xl px-2 py-1 text-left outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring">
+                    {row(
+                      <>
+                        <Icon
+                          icon={ArrowRight01Icon}
+                          size={14}
+                          className="shrink-0 text-muted-foreground transition-transform group-data-open/archived:rotate-90"
+                        />
+                        <span className="text-muted-foreground">
+                          Archived keys
+                        </span>
+                        <Badge variant="secondary">{archived.length}</Badge>
+                      </>,
+                      "Archived keys",
+                      archived.reduce((sum, entry) => sum + entry[kind], 0),
+                      kind === "cost"
+                        ? costText(archivedTotals)
+                        : compact(archivedTotals?.tokens.total ?? 0),
+                      "Combined usage of archived keys",
+                    )}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <ul className="flex min-w-0 flex-col gap-4">
+                      {archived.map(item)}
+                    </ul>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
             </CardContent>
           </Card>
         );
