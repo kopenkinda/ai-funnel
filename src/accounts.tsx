@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useHourCycle } from "./preferences.ts";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import { Progress as ProgressPrimitive } from "@base-ui/react/progress";
 import {
@@ -124,6 +125,7 @@ const windowHours = (label: string) => {
 };
 
 function QuotaRow({ quota, name }: { quota: Quota; name: string }) {
+  const hourCycle = useHourCycle();
   const remaining = quota.remaining!;
   const hours = windowHours(quota.label);
   // Share of the window still ahead: what remains if usage were spread evenly.
@@ -207,7 +209,9 @@ function QuotaRow({ quota, name }: { quota: Quota; name: string }) {
       <span
         className="text-xs text-muted-foreground tabular-nums"
         title={
-          quota.resetsAt ? new Date(quota.resetsAt).toLocaleString() : undefined
+          quota.resetsAt
+            ? new Date(quota.resetsAt).toLocaleString(undefined, { hourCycle })
+            : undefined
         }
       >
         {reset?.startsWith("Resets in ") ? reset.slice(10) : reset && "Now"}
@@ -226,6 +230,7 @@ function AccountReset({
   onReset: (account: Account, creditId: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const hourCycle = useHourCycle();
   const credit = account.resetCredits?.items
     ?.filter(
       (credit) =>
@@ -265,7 +270,9 @@ function AccountReset({
         className="text-xs text-muted-foreground"
         title={
           credit.expires_at
-            ? new Date(credit.expires_at).toLocaleString()
+            ? new Date(credit.expires_at).toLocaleString(undefined, {
+                hourCycle,
+              })
             : undefined
         }
       >

@@ -1148,8 +1148,19 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("link", { name: "Activity", exact: true }).click();
   await expect(
+    page.getByRole("columnheader", { name: "Transport" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Columns" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Transport" }).click();
+  await page.keyboard.press("Escape");
+  await expect(
     page.getByRole("cell", { name: "WS", exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Transport" })).toBeVisible();
+  await page.getByRole("button", { name: "Errors only" }).click();
+  await expect.poll(() => queries.at(-1)).toContain("status=error");
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect.poll(() => queries.at(-1)).not.toContain("status=");
   await expect(page.getByText("device@example.com", { exact: true })).toHaveCSS(
     "filter",
     /blur\(/,
@@ -1160,6 +1171,9 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
   await expect(
     page.getByRole("dialog", { name: "Request details" }),
   ).toContainText("Cache read");
+  await expect(
+    page.getByRole("dialog", { name: "Request details" }),
+  ).toContainText("WS");
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("link", { name: "Usage", exact: true }).click();

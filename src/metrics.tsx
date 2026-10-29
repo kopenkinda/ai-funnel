@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useHourCycle } from "./preferences.ts";
 import { Menu } from "@base-ui/react/menu";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import { ArrowDown01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
@@ -233,6 +234,7 @@ export function UsageMetrics({
 }) {
   const [period, setPeriod] = useState<Period>("7d");
   const [selected, setSelected] = useState<Provider[]>([]);
+  const hourCycle = useHourCycle();
   const connected = providers.filter((p) =>
     connections.some((c) => c.provider === p),
   );
@@ -247,8 +249,11 @@ export function UsageMetrics({
   const dateLabel = (at: number, detailed = false) =>
     new Date(at).toLocaleString(undefined, {
       timeZone: "UTC",
+      hourCycle,
       ...(isHourly
-        ? { hour: "numeric" }
+        ? hourCycle === "h12"
+          ? { hour: "numeric" }
+          : { hour: "2-digit", minute: "2-digit" }
         : monthly
           ? { month: "short", ...(detailed ? { year: "numeric" } : {}) }
           : period === "7d" && !detailed

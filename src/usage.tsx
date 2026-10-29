@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { useHourCycle } from "./preferences.ts";
 import { Bar, BarChart, XAxis, YAxis } from "recharts";
 import { providerNames, type Account, type PublicConnection } from "./types.ts";
 import { timeUntil } from "./api.ts";
@@ -111,6 +112,7 @@ export function UsageOverview({
 }
 
 function BankedResets({ accounts }: { accounts: Account[] }) {
+  const hourCycle = useHourCycle();
   const reporting = accounts.filter((account) => account.resetCredits != null);
   if (!reporting.length) return null;
   const available = reporting.reduce(
@@ -143,7 +145,7 @@ function BankedResets({ accounts }: { accounts: Account[] }) {
                   <span key={credit.id} className="text-muted-foreground">
                     {credit.resets_left != null && `${credit.resets_left} × `}
                     {credit.expires_at
-                      ? `Use by ${new Date(credit.expires_at).toLocaleString()}`
+                      ? `Use by ${new Date(credit.expires_at).toLocaleString(undefined, { hourCycle })}`
                       : "No expiry"}
                     {credit.attempt?.result === "nothing_to_reset"
                       ? " · Nothing to reset yet"

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useHourCycle } from "./preferences.ts";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
   Add01Icon,
@@ -57,6 +58,7 @@ export function KeyManager({
   onArchive: (key: PublicKey) => void;
   onRestore: (key: PublicKey) => void;
 }) {
+  const hourCycle = useHourCycle();
   const [view, setView] = useState("current");
   const [selectedId, setSelectedId] = useState(keys[0]?.id);
   const [revision, setRevision] = useState(0);
@@ -231,7 +233,9 @@ export function KeyManager({
                 className="text-sm font-medium"
                 title={
                   selected.lastUsedAt
-                    ? new Date(selected.lastUsedAt).toLocaleString()
+                    ? new Date(selected.lastUsedAt).toLocaleString(undefined, {
+                        hourCycle,
+                      })
                     : undefined
                 }
               >
