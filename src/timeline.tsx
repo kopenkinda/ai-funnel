@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { providerNames, type PublicConnection } from "./types.ts";
 import { PrivateText } from "./privacy.tsx";
+import { usePreferences } from "./preferences.ts";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -84,10 +85,12 @@ function events(connections: PublicConnection[], start: number, end: number) {
   return merged;
 }
 
-const clock = (at: number) =>
+const clock = (at: number, hour12: boolean, minutes = true) =>
   new Date(at).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
+    hour: hour12 ? "numeric" : "2-digit",
+    // 24-hour ticks keep minutes so "18" isn't read as a count.
+    ...(minutes || !hour12 ? { minute: "2-digit" } : {}),
+    hourCycle: hour12 ? "h12" : "h23",
   });
 
 export function ResetTimeline({
@@ -95,6 +98,7 @@ export function ResetTimeline({
 }: {
   connections: PublicConnection[];
 }) {
+  const hour12 = usePreferences((state) => state.hour12);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
@@ -132,9 +136,7 @@ export function ResetTimeline({
             >
               {label && (
                 <span className="mb-0.5 text-[10px] leading-none text-muted-foreground tabular-nums">
-                  {new Date(at).toLocaleTimeString(undefined, {
-                    hour: "numeric",
-                  })}
+                  {clock(at, hour12, false)}
                 </span>
               )}
               <span
@@ -157,7 +159,7 @@ export function ResetTimeline({
                 render={
                   <button
                     type="button"
-                    aria-label={`${name} at ${clock(event.at)}, ${count} ${count === 1 ? "account" : "accounts"}`}
+                    aria-label={`${name} at ${clock(event.at, hour12)}, ${count} ${count === 1 ? "account" : "accounts"}`}
                     className="absolute top-[38%] flex size-5 -translate-1/2 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     style={{ left: x(event.at) }}
                   />
@@ -171,7 +173,7 @@ export function ResetTimeline({
                     <span className="flex size-3 items-center justify-center">
                       <span className={mark} />
                     </span>
-                    {name} at {clock(event.at)}
+                    {name} at {clock(event.at, hour12)}
                   </p>
                   <ul className="flex flex-col gap-1">
                     {event.who.map((who, index) => (

@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { Menu } from "@base-ui/react/menu";
+import { HugeiconsIcon as Icon } from "@hugeicons/react";
+import { ArrowDown01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { Area, AreaChart, XAxis } from "recharts";
 import {
   providerNames,
@@ -30,6 +33,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { toggleVariants } from "@/components/ui/toggle";
+import { cn } from "@/lib/utils";
 
 export const compact = (n: number) =>
   new Intl.NumberFormat(undefined, {
@@ -91,13 +96,15 @@ const zeroTokens = (): Tokens => ({
 });
 const periods = {
   today: "Today",
-  "7d": "7d",
-  "30d": "30d",
+  "7d": "Week",
+  "30d": "Month",
   "90d": "90d",
+  ytd: "YTD",
   year: "Year",
   all: "All time",
 } as const;
 type Period = keyof typeof periods;
+const primaryPeriods: Period[] = ["today", "7d", "30d"];
 
 function usageRows(
   period: Period,
@@ -115,6 +122,8 @@ function usageRows(
       .filter((day) => day <= today.toISOString().slice(0, 10))
       .sort()[0];
     if (first) start.setTime(new Date(first).getTime());
+  } else if (period === "ytd") {
+    start.setUTCMonth(0, 1);
   } else if (!isHourly) {
     const days = period === "year" ? 365 : Number.parseInt(period);
     start.setUTCDate(start.getUTCDate() - days + 1);
@@ -302,22 +311,76 @@ export function UsageMetrics({
             ))}
           </ToggleGroup>
         )}
-        <ToggleGroup
+        <div
+          role="group"
           aria-label="Usage period"
-          value={[period]}
-          onValueChange={(value) => {
-            if (value[0]) setPeriod(value[0] as Period);
-          }}
-          size="sm"
-          spacing={0}
-          className="rounded-full bg-muted/50 p-1"
+          className="flex items-center rounded-full bg-muted/50 p-1"
         >
-          {Object.entries(periods).map(([value, label]) => (
-            <ToggleGroupItem key={value} value={value}>
-              {label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+          <ToggleGroup
+            aria-label="Common periods"
+            value={primaryPeriods.includes(period) ? [period] : []}
+            onValueChange={(value) => {
+              if (value[0]) setPeriod(value[0] as Period);
+            }}
+            size="sm"
+            spacing={0}
+          >
+            {primaryPeriods.map((value) => (
+              <ToggleGroupItem key={value} value={value}>
+                {periods[value]}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <Menu.Root modal={false}>
+            <Menu.Trigger
+              aria-label={
+                primaryPeriods.includes(period)
+                  ? "More periods"
+                  : `More periods, ${periods[period]} selected`
+              }
+              aria-pressed={!primaryPeriods.includes(period)}
+              className={cn(
+                toggleVariants({ size: "sm" }),
+                "gap-1 px-2 data-popup-open:bg-muted",
+                !primaryPeriods.includes(period) && "pl-3",
+              )}
+            >
+              {!primaryPeriods.includes(period) && periods[period]}
+              <Icon icon={ArrowDown01Icon} size={16} />
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner
+                side="bottom"
+                align="end"
+                sideOffset={6}
+                className="isolate z-50"
+              >
+                <Menu.Popup className="min-w-36 origin-(--transform-origin) rounded-3xl bg-popover p-1.5 text-popover-foreground shadow-lg ring-1 ring-foreground/5 outline-none data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 dark:ring-foreground/10">
+                  <Menu.RadioGroup
+                    value={period}
+                    onValueChange={(value) => setPeriod(value as Period)}
+                  >
+                    {(Object.keys(periods) as Period[])
+                      .filter((value) => !primaryPeriods.includes(value))
+                      .map((value) => (
+                        <Menu.RadioItem
+                          key={value}
+                          value={value}
+                          closeOnClick
+                          className="relative flex cursor-default items-center rounded-2xl py-2 pr-8 pl-3 text-sm font-medium outline-none select-none data-highlighted:bg-foreground/10"
+                        >
+                          {periods[value]}
+                          <Menu.RadioItemIndicator className="absolute right-2.5 flex">
+                            <Icon icon={Tick02Icon} size={16} />
+                          </Menu.RadioItemIndicator>
+                        </Menu.RadioItem>
+                      ))}
+                  </Menu.RadioGroup>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
+        </div>
       </div>
       {["tokens", "cost"].map((kind) => (
         <Card key={kind} size="sm" className="gap-2 py-3">

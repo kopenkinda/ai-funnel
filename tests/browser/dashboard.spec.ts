@@ -1079,13 +1079,19 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
   const periods = page.getByRole("group", { name: "Usage period" });
   for (const [period, total, cost] of [
     ["Today", "1.1K", "$0.0015"],
-    ["30d", "2.2K", "$0.003"],
+    ["Month", "2.2K", "$0.003"],
     ["90d", "3.3K", "$0.0044"],
     ["Year", "4.4K", "$0.0059"],
     ["All time", "5.5K", "$0.0074"],
-    ["7d", "1.1K", "$0.0015"],
+    ["Week", "1.1K", "$0.0015"],
   ]) {
-    await periods.getByRole("button", { name: period, exact: true }).click();
+    const common = ["Today", "Week", "Month"].includes(period);
+    if (common)
+      await periods.getByRole("button", { name: period, exact: true }).click();
+    else {
+      await periods.getByRole("button", { name: /^More periods/ }).click();
+      await page.getByRole("menuitemradio", { name: period }).click();
+    }
     await expect(
       page.getByRole("button", { name: "Token breakdown" }),
     ).toHaveText(total);
@@ -1093,9 +1099,21 @@ test("usage accounting, hub settings and request filters", async ({ page }) => {
       page.getByRole("button", { name: "Cost breakdown" }),
     ).toHaveText(cost);
     await expect(
-      periods.getByRole("button", { name: period, exact: true }),
+      common
+        ? periods.getByRole("button", { name: period, exact: true })
+        : periods.getByRole("button", {
+            name: `More periods, ${period} selected`,
+          }),
     ).toHaveAttribute("aria-pressed", "true");
   }
+  await periods.getByRole("button", { name: /^More periods/ }).click();
+  await expect(page.getByRole("menuitemradio")).toHaveText([
+    "90d",
+    "YTD",
+    "Year",
+    "All time",
+  ]);
+  await page.keyboard.press("Escape");
   await expect(page.locator(".recharts-area-curve")).not.toHaveCount(0);
   await expect(page.locator(".recharts-bar")).toHaveCount(0);
   const graph = page
@@ -1268,7 +1286,7 @@ test("usage summary filters by provider and maps upcoming resets", async ({
     }),
   );
   await page.goto("/");
-  await page.getByRole("button", { name: "Today" }).click();
+  await page.getByRole("button", { name: "Today", exact: true }).click();
   const summary = page.getByRole("region", { name: "API usage summary" });
   const timeline = summary.getByRole("group", {
     name: "Resets in the next 22 hours",
@@ -1304,4 +1322,16 @@ test("usage summary filters by provider and maps upcoming resets", async ({
   await summary.getByRole("button", { name: "Codex" }).click();
   await expect(tokens).toHaveText("4K");
   await expect(timeline.getByRole("button")).toHaveCount(4);
+  const monthly = timeline.getByRole("button", { name: /^Monthly reset/ });
+  await expect(monthly).toHaveAccessibleName(/ at \d{1,2}:\d{2} [AP]M,/);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const hour12 = page.getByRole("checkbox", { name: "Use 12-hour time" });
+  await expect(hour12).toBeChecked();
+  await hour12.uncheck();
+  await page.keyboard.press("Escape");
+  await expect(monthly).toHaveAccessibleName(/ at \d{2}:\d{2},/);
+  await expect(timeline).toContainText(/\d{2}:00/);
+  await expect(timeline).not.toContainText(/[AP]M/);
+  await page.reload();
+  await expect(monthly).toHaveAccessibleName(/ at \d{2}:\d{2},/);
 });

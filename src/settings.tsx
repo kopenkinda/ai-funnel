@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Settings } from "./types";
 import { api } from "./api";
 import { Dialog, CopyButton, ErrorMessage } from "./ui";
+import { usePreferences } from "./preferences";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -30,6 +31,8 @@ export function DashboardSettings({
     () => setAuto(settings?.autoUseResets ?? false),
     [settings?.autoUseResets],
   );
+  const hour12 = usePreferences((state) => state.hour12);
+  const setHour12 = usePreferences((state) => state.setHour12);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   async function run(task: () => Promise<void>) {
@@ -72,6 +75,18 @@ export function DashboardSettings({
                 Automatically redeem 5 minutes before expiry
               </FieldLabel>
             </div>
+          </div>
+        </Field>
+        <Separator />
+        <Field>
+          <FieldLabel>Time format</FieldLabel>
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id="hour12"
+              checked={hour12}
+              onCheckedChange={setHour12}
+            />
+            <FieldLabel htmlFor="hour12">Use 12-hour time</FieldLabel>
           </div>
         </Field>
         <Separator />
