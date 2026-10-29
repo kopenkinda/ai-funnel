@@ -1,0 +1,13 @@
+services:
+  ai-funnel:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4310:4310"
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-}
+    volumes:
+      - funnel-data:/app/data
+
+volumes:
+  funnel-data:
