@@ -18,12 +18,7 @@ import {
   Refresh01Icon,
   Sun01Icon,
 } from "@hugeicons/core-free-icons";
-import {
-  providerNames,
-  providers,
-  type PublicConnection,
-  type PublicKey,
-} from "../server/types.ts";
+import type { PublicConnection, PublicKey } from "../server/types.ts";
 import { api, relative, type State } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { UsageOverview } from "./usage.tsx";

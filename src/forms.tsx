@@ -140,7 +140,7 @@ export function ConnectionForm({
                   type="url"
                   required
                   defaultValue={defaults[provider]}
-              placeholder="https://codex.example.com"
+                  placeholder="https://codex.example.com"
                   spellCheck={false}
                   autoCapitalize="none"
                 />

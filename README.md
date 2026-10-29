@@ -20,6 +20,8 @@ Frontend edits update through Vite. Restart `pnpm dev` after changing the server
 
 The UI uses shadcn preset `b13HF9dX9O` with Base UI components. Theme, fonts, and icons are recorded in `components.json` and `src/styles.css`. The header theme control switches between light and dark and remembers the choice on each device.
 
+Provider logos are local SVG copies from [SVGL](https://github.com/pheralb/svgl/tree/main/static/library), with light and dark variants for Codex and OpenCode. The [SVGL license](public/providers/LICENSE.svgl) is included with the assets.
+
 ## Connect your services
 
 ### Codex through codex-lb
@@ -52,15 +54,15 @@ Choose **URL & setup** in Connections for complete URLs and copyable client conf
 
 For a host `https://funnel.example.ts.net`, the route bases are:
 
-| Provider | Client base | Native requests |
-| --- | --- | --- |
-| Codex | `/providers/codex/<id>/backend-api/codex` | Responses, compact, models |
-| Codex compatible | `/providers/codex/<id>/v1` | Responses, compact, models, usage |
-| Claude Code | `/providers/claude/<id>` | `/v1/messages`, `/v1/messages/count_tokens`, `/v1/models` |
-| Zen OpenAI | `/providers/zen/<id>/openai/v1` | Responses, chat completions, models |
-| Zen Anthropic | `/providers/zen/<id>/anthropic/v1` | Messages, count tokens, models |
-| Go OpenAI | `/providers/go/<id>/openai/v1` | Responses, chat completions, models |
-| Go Anthropic | `/providers/go/<id>/anthropic/v1` | Messages, count tokens, models |
+| Provider         | Client base                               | Native requests                                           |
+| ---------------- | ----------------------------------------- | --------------------------------------------------------- |
+| Codex            | `/providers/codex/<id>/backend-api/codex` | Responses, compact, models                                |
+| Codex compatible | `/providers/codex/<id>/v1`                | Responses, compact, models, usage                         |
+| Claude Code      | `/providers/claude/<id>`                  | `/v1/messages`, `/v1/messages/count_tokens`, `/v1/models` |
+| Zen OpenAI       | `/providers/zen/<id>/openai/v1`           | Responses, chat completions, models                       |
+| Zen Anthropic    | `/providers/zen/<id>/anthropic/v1`        | Messages, count tokens, models                            |
+| Go OpenAI        | `/providers/go/<id>/openai/v1`            | Responses, chat completions, models                       |
+| Go Anthropic     | `/providers/go/<id>/anthropic/v1`         | Messages, count tokens, models                            |
 
 API authentication accepts `Authorization: Bearer <shared-key>` or `x-api-key: <shared-key>`. Provider URLs never contain secrets. Request and response schemas remain owned by each provider, including native upstream errors and SSE. Scoped Claude requests change only the model's routing prefix.
 
@@ -107,7 +109,11 @@ Activity keeps the latest 2,000 forwarded-request records and displays the most 
 
 ## Verify changes
 
+Use `pnpm format` to format the project and `pnpm lint:fix` to apply safe lint fixes. Oxlint checks JavaScript and TypeScript, including TSX. The local `project/no-em-dash` rule rejects literal em dashes in source text, including strings, JSX, and comments. It reports their locations without rewriting copy. Imported skills and provider logo assets keep their original formatting.
+
 ```sh
+pnpm lint
+pnpm format:check
 pnpm build
 pnpm test
 pnpm exec playwright install chromium

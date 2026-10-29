@@ -1,0 +1,5 @@
+# Runtime data and build output also follow .gitignore.
+.agents/
+.claude/
+pnpm-lock.yaml
+public/providers/

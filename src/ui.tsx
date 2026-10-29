@@ -1,9 +1,6 @@
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
   AlertCircleIcon,
-  AsteriskIcon,
-  CodeIcon,
-  CommandIcon,
   Copy01Icon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
@@ -27,25 +24,35 @@ export function ProviderIcon({
   provider: Provider;
   small?: boolean;
 }) {
+  const logo = provider === "zen" || provider === "go" ? "opencode" : provider;
   return (
     <span
       aria-hidden="true"
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-xl border bg-background text-foreground",
-        small ? "size-7" : "size-9",
+        "inline-flex shrink-0 items-center justify-center",
+        small ? "size-5" : "size-7",
       )}
     >
-      <Icon
-        icon={
-          provider === "codex"
-            ? CommandIcon
-            : provider === "claude"
-              ? AsteriskIcon
-              : CodeIcon
-        }
-        size={small ? 15 : 19}
-        strokeWidth={1.8}
-      />
+      {logo === "claude" ? (
+        <img
+          src="/providers/claude.svg"
+          alt=""
+          className="size-full object-contain"
+        />
+      ) : (
+        <>
+          <img
+            src={`/providers/${logo}-light.svg`}
+            alt=""
+            className="size-full object-contain dark:hidden"
+          />
+          <img
+            src={`/providers/${logo}-dark.svg`}
+            alt=""
+            className="hidden size-full object-contain dark:block"
+          />
+        </>
+      )}
     </span>
   );
 }

@@ -18,7 +18,7 @@ The interface uses the CLI-generated Luma components and zinc/sky theme, Hugeico
 
 The feed currently supplies quota percentages rather than credit balances. Percentages are averages of reported account limits, as explained in the tooltip. Unknown values are excluded from those averages; zero remains an exhausted limit. A window with no reports has a striped unavailable state. Light, dark, and mobile screenshots were inspected after the change. Tooltips use the active popover colors rather than inverted colors. Theme changes suppress transitions so inherited button colors do not briefly disappear.
 
-Reviewed the compact card layout at desktop width and 390px. Numeric allowances are never invented for providers that do not report them. The earlier account table and summary strip were removed.
+Each connected provider also has a compact accounts table below its charts. It shows account identity, status, plan, reported quota percentages, reset times, and a link to the upstream dashboard. Accounts with no quota reports are omitted. Credit balances, purchased allowances, and warm-up controls are not in the current feed and are not displayed. Tables scroll horizontally on narrow screens. Codex, Claude, and OpenCode use local SVGL logos; monochrome logos follow the active theme.
 
 The modal focus check waits for Base UI's scheduled focus movement. In connection setup, Shift+Tab wraps from Copy URL to Close, and Tab wraps back to Copy URL, without duplicating the library's focus management.
 

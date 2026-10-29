@@ -47,6 +47,20 @@ test("quota charts distinguish exhausted and unknown limits and remain responsiv
     exact: true,
   });
   await expect(shortWindow.getByText("36.5%", { exact: true })).toBeVisible();
+  const accounts = page.getByRole("table", {
+    name: "Codex accounts",
+    exact: true,
+  });
+  await expect(accounts.getByRole("row")).toHaveCount(3);
+  await expect(accounts).not.toContainText("unavailable@example.com");
+  await expect(
+    accounts.getByRole("progressbar", {
+      name: "Exhausted account 5h remaining",
+    }),
+  ).toHaveAttribute("aria-valuenow", "0");
+  await expect(
+    accounts.getByRole("row").filter({ hasText: "exhausted@example.com" }),
+  ).toContainText("Rate limited");
   await expect(
     page.getByRole("region", { name: "Monthly usage", exact: true }),
   ).toBeVisible();

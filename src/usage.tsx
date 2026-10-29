@@ -6,7 +6,8 @@ import {
   type PublicConnection,
 } from "../server/types.ts";
 import { timeUntil } from "./api.ts";
-import { ErrorMessage } from "./ui.tsx";
+import { ErrorMessage, ProviderIcon } from "./ui.tsx";
+import { AccountsTable } from "./accounts.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -63,9 +64,10 @@ export function UsageOverview({
             <section
               key={provider}
               aria-label={`${providerNames[provider]} usage`}
-              className="flex min-w-0 flex-col gap-3"
+              className="flex min-w-0 flex-col gap-2"
             >
               <header className="flex items-center gap-2">
+                <ProviderIcon provider={provider} small />
                 <h2 className="text-sm font-medium">
                   {providerNames[provider]} usage
                 </h2>
@@ -93,7 +95,7 @@ export function UsageOverview({
                   </div>
                 ))}
               {windows.length ? (
-                <div className="grid min-w-0 gap-4 sm:grid-cols-3">
+                <div className="grid min-w-0 gap-3 sm:grid-cols-3">
                   {windows.map((label) => (
                     <QuotaCard key={label} label={label} accounts={accounts} />
                   ))}
@@ -108,6 +110,7 @@ export function UsageOverview({
                   </EmptyHeader>
                 </Empty>
               )}
+              <AccountsTable connections={providerConnections} />
             </section>
           );
         })}
@@ -166,13 +169,13 @@ function QuotaCard({
           />
         }
       >
-        <Card size="sm">
+        <Card size="sm" className="gap-2 py-3">
           <CardHeader>
             <CardTitle>{windowName(label)}</CardTitle>
           </CardHeader>
-          <CardContent className="flex min-w-0 flex-col gap-4">
+          <CardContent className="flex min-w-0 flex-col gap-2">
             <div className="flex items-baseline gap-2">
-              <span className="font-heading text-3xl font-semibold tracking-tight tabular-nums">
+              <span className="font-heading text-2xl font-semibold tracking-tight tabular-nums">
                 {remaining === null ? "-" : formatPercent(remaining)}
               </span>
               <span className="text-xs text-muted-foreground">
@@ -181,13 +184,13 @@ function QuotaCard({
             </div>
             {remaining === null ? (
               <div
-                className="quota-unavailable h-3 rounded-full"
+                className="quota-unavailable h-2 rounded-full"
                 aria-label="Quota unavailable"
               />
             ) : (
               <ChartContainer
                 config={config}
-                className="h-3 w-full aspect-auto"
+                className="h-2 w-full aspect-auto"
                 aria-hidden="true"
               >
                 <BarChart
@@ -195,7 +198,7 @@ function QuotaCard({
                   data={[data]}
                   layout="vertical"
                   margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
-                  barSize={12}
+                  barSize={8}
                 >
                   <XAxis type="number" domain={[0, 100]} hide />
                   <YAxis type="category" dataKey="window" hide />
@@ -207,10 +210,10 @@ function QuotaCard({
                       fill={`var(--color-${key})`}
                       isAnimationActive={false}
                       radius={[
-                        index === 0 ? 6 : 0,
-                        index === segments.length - 1 ? 6 : 0,
-                        index === segments.length - 1 ? 6 : 0,
-                        index === 0 ? 6 : 0,
+                        index === 0 ? 4 : 0,
+                        index === segments.length - 1 ? 4 : 0,
+                        index === segments.length - 1 ? 4 : 0,
+                        index === 0 ? 4 : 0,
                       ]}
                     />
                   ))}
