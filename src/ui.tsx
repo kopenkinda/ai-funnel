@@ -5,7 +5,7 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { Provider } from "../server/types.ts";
+import type { Provider } from "./types.ts";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";

@@ -1,0 +1,499 @@
+package funnel
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+func fail(c *gin.Context, status int, message string) {
+	typ := "invalid_request_error"
+	if status == 401 {
+		typ = "authentication_error"
+	}
+	if status == 403 {
+		typ = "permission_error"
+	}
+	if status == 429 {
+		typ = "rate_limit_error"
+	}
+	if status >= 500 {
+		typ = "api_error"
+	}
+	body := gin.H{"error": gin.H{"type": typ, "message": message}}
+	if strings.Contains(c.Request.URL.Path, "/claude/") || strings.Contains(c.Request.URL.Path, "/anthropic/") {
+		body["type"] = "error"
+	}
+	c.JSON(status, body)
+}
+func decode(c *gin.Context, v any) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10)
+	if e := json.NewDecoder(c.Request.Body).Decode(v); e != nil {
+		fail(c, 400, "Supply a valid JSON object.")
+		return false
+	}
+	return true
+}
+func bearer(r *http.Request) string {
+	if len(r.Header.Values("Authorization")) > 1 {
+		return ""
+	}
+	b := ""
+	if v := r.Header.Get("Authorization"); v != "" {
+		parts := strings.Fields(v)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			return ""
+		}
+		b = parts[1]
+	}
+	keys := r.Header.Values("X-Api-Key")
+	if len(keys) > 1 {
+		return ""
+	}
+	k := r.Header.Get("X-Api-Key")
+	if k != "" && b != "" && k != b {
+		return ""
+	}
+	if b != "" {
+		return b
+	}
+	return k
+}
+func session(r *http.Request) string {
+	v, e := r.Cookie("funnel_session")
+	if e != nil {
+		return ""
+	}
+	return v.Value
+}
+func (a *App) authorized(r *http.Request) bool {
+	d := a.store.read()
+	return d.Sessions[digest(session(r))].After(now()) || subtle.ConstantTimeCompare([]byte(digest(bearer(r))), []byte(digest(a.store.Admin))) == 1
+}
+func (a *App) save(c *gin.Context, fn func(*diskState) error) bool {
+	if e := a.store.change(fn); e != nil {
+		fail(c, 500, "Could not save application state.")
+		return false
+	}
+	return true
+}
+func (a *App) dashboard(c *gin.Context) {
+	p, m := strings.TrimPrefix(c.Request.URL.Path, "/api/"), c.Request.Method
+	if origin := c.Request.Header.Get("Origin"); origin != "" && m != "GET" && m != "HEAD" {
+		expected := a.publicURL
+		if expected == "" {
+			expected = "http://" + c.Request.Host
+		}
+		u, e := url.Parse(expected)
+		if e != nil || origin != u.Scheme+"://"+u.Host {
+			fail(c, 403, "Use the dashboard from its configured address.")
+			return
+		}
+	}
+	if p == "session" && m == "GET" {
+		d := a.store.read()
+		c.JSON(200, gin.H{"authenticated": d.Sessions[digest(session(c.Request))].After(now())})
+		return
+	}
+	if p == "session" && m == "POST" {
+		a.gate <- struct{}{}
+		defer func() { <-a.gate }()
+		host, _, _ := strings.Cut(c.Request.RemoteAddr, ":")
+		t := now().Unix()
+		valid := []int64{}
+		for _, v := range a.failures[host] {
+			if v > t-60 {
+				valid = append(valid, v)
+			}
+		}
+		if len(valid) >= 8 {
+			fail(c, 429, "Too many attempts. Try again in one minute.")
+			return
+		}
+		var b struct {
+			Token string `json:"token"`
+		}
+		if !decode(c, &b) {
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(digest(b.Token)), []byte(digest(a.store.Admin))) != 1 {
+			a.failures[host] = append(valid, t)
+			fail(c, 401, "The dashboard key is incorrect.")
+			return
+		}
+		delete(a.failures, host)
+		value := token()
+		if !a.save(c, func(d *diskState) error {
+			for k, v := range d.Sessions {
+				if v.Before(now()) {
+					delete(d.Sessions, k)
+				}
+			}
+			d.Sessions[digest(value)] = now().Add(7 * 24 * time.Hour)
+			return nil
+		}) {
+			return
+		}
+		http.SetCookie(c.Writer, &http.Cookie{Name: "funnel_session", Value: value, Path: "/", HttpOnly: true, Secure: strings.HasPrefix(a.publicURL, "https:"), SameSite: http.SameSiteStrictMode, MaxAge: 604800})
+		c.JSON(200, gin.H{"authenticated": true})
+		return
+	}
+	if !a.authorized(c.Request) {
+		fail(c, 401, "Unlock the dashboard to continue.")
+		return
+	}
+	if p == "session" && m == "DELETE" {
+		if !a.save(c, func(d *diskState) error { delete(d.Sessions, digest(session(c.Request))); return nil }) {
+			return
+		}
+		http.SetCookie(c.Writer, &http.Cookie{Name: "funnel_session", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+		c.JSON(200, gin.H{"authenticated": false})
+		return
+	}
+	if p == "state" && m == "GET" {
+		a.state(c)
+		return
+	}
+	if p == "accounts/import" && m == "POST" {
+		a.importAccount(c)
+		return
+	}
+	if p == "oauth" && m == "POST" {
+		var b struct {
+			Provider string `json:"provider"`
+		}
+		if !decode(c, &b) {
+			return
+		}
+		if b.Provider != "codex" && b.Provider != "claude" {
+			fail(c, 400, "Select Codex or Claude.")
+			return
+		}
+		w := a.managementCall(c.Request.Context(), "GET", "/oauth/auth-url?provider="+b.Provider+"&is_webui=true", "")
+		a.managementResponse(c, w.Code, w.Body.Bytes())
+		return
+	}
+	if p == "oauth/session" && m == "DELETE" {
+		state := c.Query("state")
+		if state == "" || len(state) > 256 {
+			fail(c, 400, "Supply a login state.")
+			return
+		}
+		w := a.managementCall(c.Request.Context(), "DELETE", "/oauth/session?state="+url.QueryEscape(state), "")
+		a.managementResponse(c, w.Code, w.Body.Bytes())
+		return
+	}
+	if p == "oauth/status" && m == "GET" {
+		state := c.Query("state")
+		if state == "" || len(state) > 256 {
+			fail(c, 400, "Supply a login state.")
+			return
+		}
+		w := a.managementCall(c.Request.Context(), "GET", "/oauth/status?state="+url.QueryEscape(state), "")
+		a.managementResponse(c, w.Code, w.Body.Bytes())
+		return
+	}
+	if p == "oauth/callback" && m == "POST" {
+		var b struct {
+			RedirectURL string `json:"redirect_url"`
+		}
+		if !decode(c, &b) {
+			return
+		}
+		u, e := url.Parse(b.RedirectURL)
+		if e != nil || u.Query().Get("state") == "" {
+			fail(c, 400, "Paste the complete callback URL.")
+			return
+		}
+		payload, _ := json.Marshal(b)
+		w := a.managementCall(c.Request.Context(), "POST", "/oauth/callback", string(payload))
+		a.managementResponse(c, w.Code, w.Body.Bytes())
+		return
+	}
+	if p == "connections" && m == "POST" {
+		var b Connection
+		if !decode(c, &b) {
+			return
+		}
+		if !contains([]string{"codex", "claude", "zen", "go"}, b.Provider) || strings.TrimSpace(b.Name) == "" || len(b.Name) > 80 {
+			fail(c, 400, "Supply a provider and connection name.")
+			return
+		}
+		b.ID = b.Provider
+		b.Enabled = true
+		b.CreatedAt = now()
+		if b.Provider == "zen" || b.Provider == "go" {
+			b.ID = token()[:24]
+			if b.APIKey == "" {
+				fail(c, 400, "Add your OpenCode API key.")
+				return
+			}
+			b.URL = "https://opencode.ai/inference"
+			if b.Provider == "go" {
+				b.URL += "/go"
+			}
+			var e error
+			if b.Models, e = openCodeModels(c.Request.Context(), b); e != nil {
+				fail(c, 400, "OpenCode model discovery failed.")
+				return
+			}
+		} else {
+			b.URL = ""
+			b.APIKey = ""
+		}
+		if existing, ok := a.store.read().Connections[b.ID]; ok {
+			c.JSON(200, a.publicConnection(existing))
+			return
+		}
+		if !a.save(c, func(d *diskState) error {
+			if _, ok := d.Connections[b.ID]; ok {
+				return fmt.Errorf("pool already exists")
+			}
+			d.Connections[b.ID] = b
+			return nil
+		}) {
+			return
+		}
+		c.JSON(201, a.publicConnection(b))
+		return
+	}
+	parts := strings.Split(p, "/")
+	if len(parts) >= 2 && parts[0] == "connections" {
+		d := a.store.read()
+		conn, ok := d.Connections[parts[1]]
+		if !ok {
+			fail(c, 404, "Connection not found.")
+			return
+		}
+		if len(parts) == 3 && parts[2] == "sync" && m == "POST" {
+			if conn.Provider == "zen" || conn.Provider == "go" {
+				models, e := openCodeModels(c.Request.Context(), conn)
+				if e != nil {
+					fail(c, 502, "OpenCode model discovery failed.")
+					return
+				}
+				if !a.save(c, func(d *diskState) error {
+					v, ok := d.Connections[conn.ID]
+					if !ok {
+						return fmt.Errorf("connection removed")
+					}
+					v.Models = models
+					d.Connections[conn.ID] = v
+					conn = v
+					return nil
+				}) {
+					return
+				}
+			} else {
+				a.refresh(c.Request.Context(), conn)
+			}
+			c.JSON(200, a.publicConnection(conn))
+			return
+		}
+		if len(parts) == 2 && m == "PATCH" {
+			var b struct {
+				Enabled *bool `json:"enabled"`
+			}
+			if !decode(c, &b) {
+				return
+			}
+			if b.Enabled == nil {
+				fail(c, 400, "Supply the connection state.")
+				return
+			}
+			if !a.save(c, func(d *diskState) error {
+				v := d.Connections[conn.ID]
+				v.Enabled = *b.Enabled
+				d.Connections[conn.ID] = v
+				conn = v
+				return nil
+			}) {
+				return
+			}
+			c.JSON(200, a.publicConnection(conn))
+			return
+		}
+		if len(parts) == 2 && m == "DELETE" {
+			if !a.save(c, func(d *diskState) error { delete(d.Connections, conn.ID); return nil }) {
+				return
+			}
+			c.JSON(200, gin.H{"deleted": true})
+			return
+		}
+	}
+	if len(parts) == 2 && parts[0] == "accounts" && (m == "PATCH" || m == "DELETE") {
+		auth, ok := a.core.GetByID(parts[1])
+		if !ok {
+			fail(c, 404, "Account not found.")
+			return
+		}
+		if m == "DELETE" {
+			if e := a.store.Delete(c.Request.Context(), auth.ID); e != nil {
+				fail(c, 500, "Could not remove account.")
+				return
+			}
+			a.core.Remove(c.Request.Context(), auth.ID)
+		} else {
+			var b struct {
+				Enabled *bool `json:"enabled"`
+			}
+			if !decode(c, &b) {
+				return
+			}
+			if b.Enabled == nil {
+				fail(c, 400, "Supply the account state.")
+				return
+			}
+			auth.Disabled = !*b.Enabled
+			if _, e := a.core.Update(c.Request.Context(), auth); e != nil {
+				fail(c, 500, "Could not update account.")
+				return
+			}
+		}
+		c.JSON(200, gin.H{"ok": true})
+		return
+	}
+	if p == "keys" && m == "POST" {
+		a.createKey(c)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "keys" {
+		var b struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if m == "PATCH" {
+			if !decode(c, &b) {
+				return
+			}
+			if b.Enabled == nil {
+				fail(c, 400, "Supply the key state.")
+				return
+			}
+		}
+		d := a.store.read()
+		k, ok := d.Keys[parts[1]]
+		if !ok {
+			fail(c, 404, "Key not found.")
+			return
+		}
+		if m == "PATCH" {
+			k.Enabled = *b.Enabled
+			if !a.save(c, func(d *diskState) error { d.Keys[k.ID] = k; return nil }) {
+				return
+			}
+			k.Hash = ""
+			c.JSON(200, k)
+			return
+		}
+		if m == "DELETE" {
+			if !a.save(c, func(d *diskState) error { delete(d.Keys, k.ID); return nil }) {
+				return
+			}
+			c.JSON(200, gin.H{"deleted": true})
+			return
+		}
+	}
+	fail(c, 404, "Route not found.")
+}
+func (a *App) managementResponse(c *gin.Context, status int, b []byte) {
+	if status >= 400 {
+		fail(c, status, "Account sign-in could not be completed. Try starting a new sign-in.")
+		return
+	}
+	c.Data(status, "application/json", b)
+}
+func (a *App) state(c *gin.Context) {
+	d := a.store.read()
+	conns := []any{}
+	for _, v := range d.Connections {
+		conns = append(conns, a.publicConnection(v))
+	}
+	sort.Slice(conns, func(i, j int) bool {
+		return conns[i].(gin.H)["provider"].(string) < conns[j].(gin.H)["provider"].(string)
+	})
+	keys := []Key{}
+	for _, k := range d.Keys {
+		k.Hash = ""
+		k.RequestsToday = d.Usage[usageID(k.ID)]
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].CreatedAt.Before(keys[j].CreatedAt) })
+	logs := d.Requests
+	if len(logs) > 100 {
+		logs = logs[len(logs)-100:]
+	}
+	reverse := make([]RequestLog, len(logs))
+	for i, v := range logs {
+		reverse[len(logs)-1-i] = v
+	}
+	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL})
+}
+func (a *App) createKey(c *gin.Context) {
+	var b struct {
+		Name       string     `json:"name"`
+		Existing   string     `json:"existingKey"`
+		Grants     []Grant    `json:"grants"`
+		ExpiresAt  *time.Time `json:"expiresAt"`
+		DailyLimit *int       `json:"dailyLimit"`
+	}
+	if !decode(c, &b) {
+		return
+	}
+	if strings.TrimSpace(b.Name) == "" || len(b.Name) > 80 || len(b.Grants) == 0 || len(b.Grants) > 30 || (b.ExpiresAt != nil && !b.ExpiresAt.After(now())) || (b.DailyLimit != nil && *b.DailyLimit < 1) {
+		fail(c, 400, "Supply a name, valid access, and future expiration.")
+		return
+	}
+	value := b.Existing
+	if value == "" {
+		value = "sk-af-" + token()
+	} else if len(value) < 16 || strings.ContainsAny(value, " \t\r\n") {
+		fail(c, 400, "Supply a valid existing key.")
+		return
+	}
+	d := a.store.read()
+	seen := map[string]bool{}
+	for _, g := range b.Grants {
+		conn, ok := d.Connections[g.ConnectionID]
+		if !ok || seen[g.ConnectionID] || (g.AccountIDs != nil && len(g.AccountIDs) == 0) || (g.Models != nil && len(g.Models) == 0) {
+			fail(c, 400, "Select valid connections and account access.")
+			return
+		}
+		seen[g.ConnectionID] = true
+		for _, id := range g.AccountIDs {
+			if conn.Provider == "zen" || conn.Provider == "go" {
+				if id != conn.ID {
+					fail(c, 400, "Account not found.")
+					return
+				}
+			} else if auth, ok := a.core.GetByID(id); !ok || auth.Provider != conn.Provider {
+				fail(c, 400, "Account not found in this provider.")
+				return
+			}
+		}
+	}
+	k := Key{ID: token()[:24], Name: b.Name, Hash: digest(value), Prefix: value[:min(8, len(value)/2)], Enabled: true, ExpiresAt: b.ExpiresAt, DailyLimit: b.DailyLimit, Grants: b.Grants, Imported: b.Existing != "", CreatedAt: now()}
+	if !a.save(c, func(d *diskState) error {
+		for _, old := range d.Keys {
+			if old.Hash == k.Hash {
+				return fmt.Errorf("key already registered")
+			}
+		}
+		d.Keys[k.ID] = k
+		return nil
+	}) {
+		return
+	}
+	k.Hash = ""
+	var shown any = value
+	if b.Existing != "" {
+		shown = nil
+	}
+	c.JSON(201, gin.H{"key": k, "token": shown})
+}

@@ -7,15 +7,16 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "node --env-file-if-exists=.env server/index.ts",
-    "build": "tsc --noEmit && vite build",
-    "start": "NODE_ENV=production node --env-file-if-exists=.env server/index.ts",
-    "lint": "oxlint --deny-warnings",
+    "dev": "pnpm build:ui && go run ./cmd/funnel",
+    "build": "pnpm build:ui && go build -o bin/ai-funnel ./cmd/funnel",
+    "start": "./bin/ai-funnel",
+    "lint": "oxlint --deny-warnings && go vet ./...",
     "lint:fix": "oxlint --deny-warnings --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "test": "node --test tests/*.test.ts",
-    "test:ui": "playwright test"
+    "format": "prettier --write . && gofmt -w cmd internal",
+    "format:check": "prettier --check . && test -z \"$(gofmt -l cmd internal)\"",
+    "test": "go test ./... && node --test tests/*.test.ts",
+    "test:ui": "playwright test",
+    "build:ui": "tsc --noEmit && vite build"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

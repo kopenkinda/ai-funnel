@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
-    "paths": { "@/*": ["./src/*"] },
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "target": "ES2023",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
@@ -14,11 +16,5 @@
     "esModuleInterop": true,
     "types": ["node", "vite/client"]
   },
-  "include": [
-    "server",
-    "src",
-    "tests",
-    "vite.config.ts",
-    "playwright.config.ts"
-  ]
+  "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"]
 }

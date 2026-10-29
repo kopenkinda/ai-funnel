@@ -1,10 +1,6 @@
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import { ArrowUpRight01Icon, Clock01Icon } from "@hugeicons/core-free-icons";
-import {
-  providerNames,
-  type Account,
-  type PublicConnection,
-} from "../server/types.ts";
+import { providerNames, type Account, type PublicConnection } from "./types.ts";
 import { timeUntil } from "./api.ts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,7 +81,7 @@ export function AccountsTable({
                     .map((quota, index) => (
                       <div
                         key={`${quota.label}/${index}`}
-                        className="grid grid-cols-[2.75rem_2.5rem_3rem_1fr] items-center gap-2"
+                        className="grid grid-cols-[minmax(2.75rem,auto)_2.5rem_3rem_1fr] items-center gap-2"
                       >
                         <span className="text-xs text-muted-foreground">
                           {quota.label === "7d"
@@ -130,7 +126,16 @@ export function AccountsTable({
                   title="Open provider dashboard"
                   nativeButton={false}
                   render={
-                    <a href={connection.url} target="_blank" rel="noreferrer" />
+                    <a
+                      href={
+                        connection.url ||
+                        (connection.provider === "codex"
+                          ? "https://chatgpt.com"
+                          : "https://claude.ai")
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                    />
                   }
                 >
                   <Icon icon={ArrowUpRight01Icon} />

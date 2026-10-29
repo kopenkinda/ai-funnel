@@ -1,8 +1,4 @@
-import type {
-  PublicConnection,
-  PublicKey,
-  RequestLog,
-} from "../server/types.ts";
+import type { PublicConnection, PublicKey, RequestLog } from "./types.ts";
 export type State = {
   connections: PublicConnection[];
   keys: PublicKey[];

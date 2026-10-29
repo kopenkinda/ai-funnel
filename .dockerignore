@@ -12,3 +12,5 @@ docs/live-codex.md
 *.sqlite-*
 *.log
 .DS_Store
+
+bin

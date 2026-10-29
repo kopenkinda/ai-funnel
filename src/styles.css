@@ -138,13 +138,6 @@
   }
 }
 
-.quota-unavailable {
-  background: repeating-linear-gradient(
-    -45deg,
-    var(--muted) 0 6px,
-    var(--quota-used) 6px 8px
-  );
-}
 @layer base {
   h1,
   h2,

@@ -1,36 +1,27 @@
 # Verification
 
-Updated on 29 October 2026 for the quota chart layout using shadcn preset `b13HF9dX9O`. Provider adapters and account storage were not changed by this redesign.
+The backend now embeds CLIProxyAPI v8.0.47 in Go. The React design is retained. The previous Node companion backend and its external-service adapters have been removed. No live accounts or data were migrated.
 
-## Current checks
+The Go integration test boots the real embedded SDK with isolated encrypted state and controlled provider executors. It checks dashboard authentication, foreign-origin rejection, blocked raw SDK routes, model discovery, native Codex Responses and Claude Messages, streaming, account restrictions, paused/deleted assignments, cross-provider rejection, concurrent daily limits, quota normalization, and encrypted persistence.
 
-- Production TypeScript/Vite build passes.
-- All 12 gateway tests pass. These cover authentication, origins, provider/model/account boundaries, expiration, concurrent daily caps, revocation, scoped Codex keys, Claude prefixes, SSE, upstream errors, cancellation, quota normalization, and encrypted storage.
-- All 3 Playwright flows pass against isolated fixture services. These cover compact quota cards, account details on hover and focus, omission of unknown accounts, zero limits, provider rows, connection setup, scoped key creation, pausing, reload persistence, removal, mobile overflow, reduced motion, and dialog focus in both tab directions.
-- Chromium checks cover theme persistence, mobile top navigation, and a scrollable setup dialog at 390px. No page errors were observed in those checks. The responsive browser flow switches sections through the navbar on mobile.
-- A read-only UI check against a connected Codex pool displayed unavailable quotas, an additional 30-day window, and rate limiting. At 826px, account rows stack without page overflow. No console or page errors were observed. Installation-specific notes remain local and are excluded from Git.
+The Oxlint CLI tests check that the custom punctuation rule loads and rejects literal em dashes in comments, strings, templates, and JSX.
 
-The updated development server runs on port 4310. The inline Vite setup now uses the shared Vite configuration so Tailwind and import aliases work in both development and production.
+A focused storage test checks that the SDK's initial OAuth token-storage object survives an encrypted round trip, including its refresh token. OpenCode forwarding checks preserve the native API path, session header, and SSE response while replacing device credentials and stripping cookies.
 
-## UI review
+Credential-import tests cover native Codex auth.json, Codex JWT identity extraction, flat CLIProxyAPI JSON, Claude Code credential JSON, and pasted Claude setup tokens. The embedded test checks immediate model activation and inference with a controlled executor, encrypted refresh-token persistence, re-import identity and pause preservation, and wrong-provider rejection. No live credential file is used.
 
-The interface uses the CLI-generated Luma components and zinc/sky theme, Hugeicons, Space Grotesk body text, and Nunito Sans headings. `components.json` records the preset configuration. Usage groups connections by provider and shows compact quota cards with horizontal stacked bars and remaining percentages. Unconnected providers have no row. Codex has 5-hour, weekly, and monthly cards. Account names and reset times appear on hover or keyboard focus. Accounts without a reported percentage are omitted from that window's tooltip; exhausted accounts remain visible.
+Playwright checks dashboard login, account-source choices, invalid-file feedback, Codex auth.json upload into the real backend, additional account access, key creation, reload persistence, and the narrow login layout. A third check covers model-scoped usage, hidden unavailable windows, exhausted allowances, and the banked-reset hover details. The quota request after its fixture import is intercepted. It does not automate a real provider login.
 
-The feed currently supplies quota percentages rather than credit balances. Percentages are averages of reported account limits, as explained in the tooltip. Unknown values are excluded from those averages; zero remains an exhausted limit. A window with no reports has a striped unavailable state. Light, dark, and mobile screenshots were inspected after the change. Tooltips use the active popover colors rather than inverted colors. Theme changes suppress transitions so inherited button colors do not briefly disappear.
+Local build, lint, formatting, Go tests with the race detector, Oxlint tests, source secret scanning, and all three Playwright checks passed. Focused quota tests cover Claude's newer scoped limits with null model IDs, legacy fields, Codex weekly-only accounts, additional pools, relative reset times, and banked-reset counts.
 
-Each connected provider also has a compact accounts table below its charts. It shows account identity, status, plan, reported quota percentages, reset times, and a link to the upstream dashboard. Accounts with no quota reports are omitted. Credit balances, purchased allowances, and warm-up controls are not in the current feed and are not displayed. Tables scroll horizontally on narrow screens. Codex, Claude, and OpenCode use local SVGL logos; monochrome logos follow the active theme.
+The full multi-stage Docker build failed twice during dependency downloads with unexpected EOF errors. A Linux binary compiled locally was checked in the same runtime stage, which started as one Go process and preserved encrypted state after restart. The full Dockerfile dependency-install stages remain unverified in this environment.
 
-The modal focus check waits for Base UI's scheduled focus movement. In connection setup, Shift+Tab wraps from Copy URL to Close, and Tab wraps back to Copy URL, without duplicating the library's focus management.
+Live quota reads now report Claude's session, weekly, and Fable weekly windows and Codex's weekly allowance and banked resets. Missing windows do not produce usage cards. The owner also completed a live Codex Responses probe through the new service.
 
-The generated Hugeicons spinner needed its props type narrowed to the actual icon component. This corrects an upstream type incompatibility between string-valued SVG dimensions and the icon component's numeric dimensions.
+On 29 October 2026, the installed Claude Code 2.1.311 client sent `Hi` for every one of the 19 advertised Claude model IDs through the local `/providers/claude/claude` base URL. The tests used Claude Code's default system prompt, disabled tools and customizations, isolated temporary settings, and a temporary shared client key. Proxy activity confirmed the model requests. The key was deleted afterward; credentials and raw client output are not included in this repository.
 
-Not checked in this pass: Safari/Firefox, a full screen-reader session, forced colors, clipboard permissions in other browsers, or a fresh Docker build. The earlier Docker baseline built and ran as the non-root Node user without runtime npm dependencies. Production build output still consists of static frontend assets.
+All 14 current model IDs returned a greeting: Fable 5 and 5.1; Haiku 4.5 and 5.5; Opus 4.5, 4.6, 4.7, 4.8, 5, and 5.5; Sonnet 4.5, 4.6, 5, and 5.5. Two legacy requests, Opus 4 and 4.1, were remapped by Claude Code to Opus 5.5 before reaching the proxy. Three legacy IDs failed: `claude-3-5-haiku-20241022`, `claude-3-7-sonnet-20250219`, and `claude-sonnet-4-20250514`. The proxy returned 503 with the upstream model-not-found error retained in the SDK's cooldown state. These five legacy IDs remain in the SDK model catalog; they are [retired by Anthropic](https://platform.claude.com/docs/en/about-claude/model-deprecations). This is not a claim that all advertised IDs work unchanged.
 
-## Existing integration boundaries
+Browser-based OAuth completion, real credential rotation, OpenCode credentials, and tailnet deployment still need operational verification. The old codex-lb verification does not establish compatibility for this new backend.
 
-- The existing codex-lb pool remains the owner of account tokens, refresh, and load balancing. Connecting the pool did not migrate accounts.
-- The earlier live codex-lb check verified discovery, quota/reset synchronization, scoped key creation, native models, missing-key rejection, and a streaming Responses request. TOTP was not checked because the installation does not require it.
-- Claude targets CLIProxyAPI management v8. Live subscription quotas and routing prefixes still need checking with the installed service.
-- Zen/Go discovery and inference still need live credential verification. Balance/reset retrieval is not implemented.
-- Codex WebSockets are not implemented. Client configuration uses HTTP Responses with WebSockets disabled.
-- Tailscale Serve, tailnet ACLs, the deployment hostname, backups, and long-running deployment remain outside this UI pass.
+The initial transport is HTTP/SSE. Clients must disable Codex WebSockets. Unknown quotas remain unknown; a failed refresh preserves the last snapshot and timestamp. OpenCode balance/reset reporting is not implemented.

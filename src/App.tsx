@@ -18,7 +18,7 @@ import {
   Refresh01Icon,
   Sun01Icon,
 } from "@hugeicons/core-free-icons";
-import type { PublicConnection, PublicKey } from "../server/types.ts";
+import type { PublicConnection, PublicKey } from "./types.ts";
 import { api, relative, type State } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { UsageOverview } from "./usage.tsx";
@@ -298,7 +298,7 @@ export function App() {
                               className="mt-3"
                               onClick={() => setReconnect(c)}
                             >
-                              Reconnect codex-lb
+                              Add account
                             </Button>
                           )}
                         </div>
@@ -317,6 +317,16 @@ export function App() {
                         />
                       </Button>
                       <div className="flex items-center gap-1">
+                        {(c.provider === "codex" ||
+                          c.provider === "claude") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setReconnect(c)}
+                          >
+                            Add account
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon-sm"
@@ -523,7 +533,7 @@ export function App() {
               <AlertDialogDescription>
                 {remove.name}.{" "}
                 {remove.type === "keys"
-                  ? "This key will stop working through ai-funnel. Keys used directly with codex-lb stay unchanged."
+                  ? "This key will stop working through ai-funnel."
                   : "Clients using this URL will stop working. Upstream accounts stay in their original service."}
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -764,7 +774,7 @@ function KeyRow({
                             )
                             .join(", ")
                         : k.imported && c?.provider === "codex"
-                          ? "Account access inherited from codex-lb"
+                          ? "All accounts in this provider"
                           : "Whole connection pool"}
                     </p>
                     <p className="text-xs text-muted-foreground">

@@ -1,10 +1,6 @@
 import { useId } from "react";
 import { Bar, BarChart, XAxis, YAxis } from "recharts";
-import {
-  providerNames,
-  type Account,
-  type PublicConnection,
-} from "../server/types.ts";
+import { providerNames, type Account, type PublicConnection } from "./types.ts";
 import { timeUntil } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { AccountsTable } from "./accounts.tsx";
@@ -12,12 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import {
   Tooltip,
   TooltipContent,
@@ -34,7 +24,11 @@ const windowName = (label: string) =>
       ? "Weekly usage"
       : label === "30d" || label === "Monthly"
         ? "Monthly usage"
-        : `${label} usage`;
+        : label.endsWith(" 7d")
+          ? `${label.slice(0, -3)} weekly usage`
+          : label.endsWith(" 5h")
+            ? `${label.slice(0, -3)} 5-hour usage`
+            : `${label} usage`;
 
 export function UsageOverview({
   connections,
@@ -52,21 +46,19 @@ export function UsageOverview({
           );
           const accounts = providerConnections.flatMap((c) => c.accounts);
           const windows = [
-            ...new Set(accounts.flatMap((a) => a.quotas.map((q) => q.label))),
+            ...new Set(
+              accounts.flatMap((a) =>
+                a.quotas.filter((q) => q.remaining != null).map((q) => q.label),
+              ),
+            ),
           ];
-          if (
-            provider === "codex" &&
-            windows.length &&
-            !windows.some((label) => windowName(label) === "Monthly usage")
-          )
-            windows.push("Monthly");
           return (
             <section
               key={provider}
               aria-label={`${providerNames[provider]} usage`}
               className="flex min-w-0 flex-col gap-2"
             >
-              <header className="flex items-center gap-2">
+              <header className="flex flex-wrap items-center gap-2">
                 <ProviderIcon provider={provider} small />
                 <h2 className="text-sm font-medium">
                   {providerNames[provider]} usage
@@ -74,6 +66,7 @@ export function UsageOverview({
                 {providerConnections.every((c) => !c.enabled) && (
                   <Badge variant="secondary">Paused</Badge>
                 )}
+                <BankedResets accounts={accounts} />
               </header>
               {providerConnections
                 .filter((c) => c.error)
@@ -89,26 +82,17 @@ export function UsageOverview({
                         size="sm"
                         onClick={() => onReconnect(connection)}
                       >
-                        Reconnect codex-lb
+                        Add account
                       </Button>
                     )}
                   </div>
                 ))}
-              {windows.length ? (
+              {windows.length > 0 && (
                 <div className="grid min-w-0 gap-3 sm:grid-cols-3">
                   {windows.map((label) => (
                     <QuotaCard key={label} label={label} accounts={accounts} />
                   ))}
                 </div>
-              ) : (
-                <Empty className="border">
-                  <EmptyHeader>
-                    <EmptyTitle>Quotas not reported</EmptyTitle>
-                    <EmptyDescription>
-                      This connection has no quota data yet.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
               )}
               <AccountsTable connections={providerConnections} />
             </section>
@@ -116,6 +100,36 @@ export function UsageOverview({
         })}
       </div>
     </TooltipProvider>
+  );
+}
+
+function BankedResets({ accounts }: { accounts: Account[] }) {
+  const reporting = accounts.filter((account) => account.resetCredits != null);
+  if (!reporting.length) return null;
+  const available = reporting.reduce(
+    (sum, account) => sum + account.resetCredits!.available,
+    0,
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Badge variant="outline" tabIndex={0} />}>
+        {available} banked {available === 1 ? "reset" : "resets"}
+      </TooltipTrigger>
+      <TooltipContent role="tooltip" side="bottom" align="start">
+        <ul className="flex flex-col gap-2 py-1">
+          {reporting.map((account) => (
+            <li key={account.id} className="flex flex-col gap-0.5">
+              <span>{account.name}</span>
+              <span className="text-muted-foreground">
+                {account.resetCredits!.available} banked
+                {account.resetCredits!.applicable !== null &&
+                  ` · ${account.resetCredits!.applicable} usable now`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -134,17 +148,17 @@ function QuotaCard({
     color: `var(--chart-${(index % 5) + 1})`,
   }));
   const reporting = rows.filter((row) => row.quota?.remaining != null);
-  const remaining = reporting.length
-    ? reporting.reduce((sum, row) => sum + row.quota!.remaining!, 0) /
-      reporting.length
-    : null;
-  const used = remaining === null ? null : 100 - remaining;
+  if (!reporting.length) return null;
+  const remaining =
+    reporting.reduce((sum, row) => sum + row.quota!.remaining!, 0) /
+    reporting.length;
+  const used = 100 - remaining;
   const config: ChartConfig = {
     used: { label: "Used", color: "var(--quota-used)" },
   };
   const data: Record<string, string | number> = {
     window: label,
-    used: used ?? 0,
+    used,
   };
   for (const row of reporting) {
     config[row.key] = { label: row.account.name, color: row.color };
@@ -159,7 +173,6 @@ function QuotaCard({
   return (
     <Tooltip>
       <TooltipTrigger
-        disabled={!reporting.length}
         render={
           <div
             role="region"
@@ -176,50 +189,41 @@ function QuotaCard({
           <CardContent className="flex min-w-0 flex-col gap-2">
             <div className="flex items-baseline gap-2">
               <span className="font-heading text-2xl font-semibold tracking-tight tabular-nums">
-                {remaining === null ? "-" : formatPercent(remaining)}
+                {formatPercent(remaining)}
               </span>
-              <span className="text-xs text-muted-foreground">
-                {remaining === null ? "Unavailable" : "remaining"}
-              </span>
+              <span className="text-xs text-muted-foreground">remaining</span>
             </div>
-            {remaining === null ? (
-              <div
-                className="quota-unavailable h-2 rounded-full"
-                aria-label="Quota unavailable"
-              />
-            ) : (
-              <ChartContainer
-                config={config}
-                className="h-2 w-full aspect-auto"
-                aria-hidden="true"
+            <ChartContainer
+              config={config}
+              className="h-2 w-full aspect-auto"
+              aria-hidden="true"
+            >
+              <BarChart
+                accessibilityLayer={false}
+                data={[data]}
+                layout="vertical"
+                margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
+                barSize={8}
               >
-                <BarChart
-                  accessibilityLayer={false}
-                  data={[data]}
-                  layout="vertical"
-                  margin={{ top: 0, right: 0, bottom: 0, left: 0 }}
-                  barSize={8}
-                >
-                  <XAxis type="number" domain={[0, 100]} hide />
-                  <YAxis type="category" dataKey="window" hide />
-                  {segments.map((key, index) => (
-                    <Bar
-                      key={key}
-                      dataKey={key}
-                      stackId="quota"
-                      fill={`var(--color-${key})`}
-                      isAnimationActive={false}
-                      radius={[
-                        index === 0 ? 4 : 0,
-                        index === segments.length - 1 ? 4 : 0,
-                        index === segments.length - 1 ? 4 : 0,
-                        index === 0 ? 4 : 0,
-                      ]}
-                    />
-                  ))}
-                </BarChart>
-              </ChartContainer>
-            )}
+                <XAxis type="number" domain={[0, 100]} hide />
+                <YAxis type="category" dataKey="window" hide />
+                {segments.map((key, index) => (
+                  <Bar
+                    key={key}
+                    dataKey={key}
+                    stackId="quota"
+                    fill={`var(--color-${key})`}
+                    isAnimationActive={false}
+                    radius={[
+                      index === 0 ? 4 : 0,
+                      index === segments.length - 1 ? 4 : 0,
+                      index === segments.length - 1 ? 4 : 0,
+                      index === 0 ? 4 : 0,
+                    ]}
+                  />
+                ))}
+              </BarChart>
+            </ChartContainer>
           </CardContent>
         </Card>
       </TooltipTrigger>
@@ -253,9 +257,7 @@ function QuotaCard({
             ))}
           </ul>
           <p className="border-t border-current/15 pt-2 opacity-60">
-            {used === null
-              ? "No accounts reporting"
-              : `${formatPercent(used)} used · Average of ${reporting.length} reporting accounts`}
+            {`${formatPercent(used)} used · Average of ${reporting.length} reporting accounts`}
           </p>
         </div>
       </TooltipContent>

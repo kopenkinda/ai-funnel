@@ -1,125 +1,85 @@
 # ai-funnel
 
-A personal dashboard and gateway for Codex, Claude subscriptions, and OpenCode Zen/Go. Each connection has its own provider URL. Shared client keys control which connections, accounts, and models your devices can use.
+One personal service for Codex, Claude subscriptions, and OpenCode Zen/Go. The Go backend embeds [CLIProxyAPI v8.0.47](https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.47) and serves the React dashboard. Codex and Claude accounts log in directly here. You do not need separate codex-lb or CLIProxyAPI deployments.
 
-The agreed scope and architecture are in [PLAN.md](PLAN.md).
+## Run
 
-## Run locally
-
-Requires Node 24 or newer and pnpm.
+Build with Go 1.27.3+, Node 24+, and pnpm:
 
 ```sh
 pnpm install --frozen-lockfile
 cp .env.example .env
-pnpm dev
-```
-
-Open <http://127.0.0.1:4310>. The first start writes your dashboard key to `data/admin-token`. Read that file locally and use the key to unlock the dashboard. The terminal prints the file's location, never its contents. An explicit `ADMIN_TOKEN` environment variable overrides this file.
-
-Frontend edits update through Vite. Restart `pnpm dev` after changing the server.
-
-The UI uses shadcn preset `b13HF9dX9O` with Base UI components. Theme, fonts, and icons are recorded in `components.json` and `src/styles.css`. The header theme control switches between light and dark and remembers the choice on each device.
-
-Provider logos are local SVG copies from [SVGL](https://github.com/pheralb/svgl/tree/main/static/library), with light and dark variants for Codex and OpenCode. The [SVGL license](public/providers/LICENSE.svgl) is included with the assets.
-
-## Connect your services
-
-### Codex through codex-lb
-
-Choose **Connect provider → Codex**, then enter your codex-lb URL and dashboard password. Supply a username or current two-factor code if your installation requires them. Passwordless upstream dashboards can leave the password empty.
-
-The dashboard loads account identities, status, quota windows, and reset times from codex-lb. An optional codex-lb API key also loads the model catalog. The password is used during login and is never saved. The returned dashboard session is encrypted locally.
-
-Create a shared key and choose the whole Codex pool or specific accounts. ai-funnel creates an upstream codex-lb key with those account and model restrictions. codex-lb continues to own account selection, OAuth refresh, native usage limits, and any existing token/cost policy.
-
-To keep a key already installed on your devices, choose **API keys → Add key → Use existing Codex key**. Register its original value, select its Codex connection, then add the other provider connections you want. Its Codex access remains inherited from codex-lb. You can add narrower model restrictions at the gateway.
-
-### Claude subscriptions through CLIProxyAPI
-
-Connect a CLIProxyAPI server using its management key and a client API key. This adapter targets **management API v8**. Log your Claude subscription accounts into CLIProxyAPI first. That service owns login and refresh; ai-funnel never imports Claude OAuth credentials.
-
-Use a CLIProxyAPI instance dedicated to Claude. Whole-pool access uses its normal routing. Account subsets require unique credential routing prefixes already configured in CLIProxyAPI. Accounts without a prefix cannot be selected individually. A selected subset is pinned deterministically by session ID. Availability changes fail closed instead of expanding the selection.
-
-The usage adapter asks CLIProxyAPI to call Claude's subscription usage endpoint using its existing credential. If that lookup is unavailable, the account still appears and its quotas show **Unavailable**. Discovery success is separate from quota availability.
-
-### OpenCode Zen and Go
-
-Add each Zen or Go credential as a separate connection. The form supplies the upstream API base. Model discovery validates the key. Select several connections when creating a shared key to allow several credentials.
-
-Zen and Go have their own OpenAI and Anthropic routes. There is no automatic switch between them or to another provider. A verified balance/reset API is not implemented, so those limits remain **Quota not reported** with a link to OpenCode Console.
-
-## Configure devices
-
-Choose **URL & setup** in Connections for complete URLs and copyable client configuration. Set `AI_FUNNEL_KEY` on the device to a shared key allowed on that connection.
-
-For a host `https://funnel.example.ts.net`, the route bases are:
-
-| Provider         | Client base                               | Native requests                                           |
-| ---------------- | ----------------------------------------- | --------------------------------------------------------- |
-| Codex            | `/providers/codex/<id>/backend-api/codex` | Responses, compact, models                                |
-| Codex compatible | `/providers/codex/<id>/v1`                | Responses, compact, models, usage                         |
-| Claude Code      | `/providers/claude/<id>`                  | `/v1/messages`, `/v1/messages/count_tokens`, `/v1/models` |
-| Zen OpenAI       | `/providers/zen/<id>/openai/v1`           | Responses, chat completions, models                       |
-| Zen Anthropic    | `/providers/zen/<id>/anthropic/v1`        | Messages, count tokens, models                            |
-| Go OpenAI        | `/providers/go/<id>/openai/v1`            | Responses, chat completions, models                       |
-| Go Anthropic     | `/providers/go/<id>/anthropic/v1`         | Messages, count tokens, models                            |
-
-API authentication accepts `Authorization: Bearer <shared-key>` or `x-api-key: <shared-key>`. Provider URLs never contain secrets. Request and response schemas remain owned by each provider, including native upstream errors and SSE. Scoped Claude requests change only the model's routing prefix.
-
-Codex configuration uses `wire_api = "responses"`, `requires_openai_auth = false`, and `supports_websockets = false`. This version supports HTTP and SSE. WebSocket upgrades return HTTP 426. Codex-compatible Chat Completions and unrelated provider paths are not exposed.
-
-Keys can be paused, resumed, or removed. Set account/model access, expiration, and an optional shared daily request limit when creating a key. To change a grant, create a replacement key. Daily request caps count forwarded requests across all providers, including failed upstream attempts and model discovery. They reset at midnight UTC. Requests rejected locally do not consume the cap.
-
-Removing a key revokes its ai-funnel access. Direct use of an existing codex-lb key remains unchanged. Generated upstream codex-lb keys also remain in codex-lb and can be removed there if no longer needed.
-
-## Run inside your tailnet
-
-Build and run the production server on loopback:
-
-```sh
 pnpm build
 pnpm start
 ```
 
-Configure Tailscale Serve to forward your private HTTPS hostname to `http://127.0.0.1:4310`. Keep access restricted to your tailnet. ai-funnel does not configure Tailscale or infer who is allowed to reach it.
+Open <http://127.0.0.1:4310>. Read the dashboard key locally from `DATA_DIR/admin-token`. The default directory is `data/embedded`. An explicit `ADMIN_TOKEN` overrides that file. The service reads `.env` on startup and prints the key's location, never its value.
 
-Set `PUBLIC_URL` in `.env` to that exact HTTPS origin and restart the process. It supplies generated client snippets, the expected dashboard origin for mutations, and secure session cookies. Upstream URLs must be reachable from the server that runs ai-funnel. A remote machine's loopback address refers to that machine.
+`pnpm dev` builds the frontend and runs the Go backend. Run `pnpm build:ui` after frontend edits, then refresh the page. Restart after Go changes. Production needs only `bin/ai-funnel`, `dist`, and its data directory. Node is a build tool, not a production backend.
 
-Use a process supervisor to restart the server after reboots. A container option is included:
+## Add accounts
+
+Choose **Connect provider**, select Codex or Claude, then choose an account source:
+
+- **OAuth** opens the provider's sign-in. If it ends at an unreachable localhost page, paste that complete callback URL into the dashboard.
+- **Auth token** accepts an OAuth access token or Claude setup token. Codex normally reads the account ID from the token; you can enter it when needed. A token without refresh credentials works until it expires, then needs replacing.
+- **JSON file** imports Codex's `~/.codex/auth.json`, a flat CLIProxyAPI credential file, or Claude Code's `.credentials.json`. Refresh tokens and expiry are retained. Subscription credentials are supported; API-key-only Codex files are rejected.
+
+Imports go directly into the encrypted store and become available without restarting. Re-importing a recognized account retains its ID, key assignments, and pause state. The app does not modify your source file or save a plaintext copy. Token validity is checked by provider requests, not by merely parsing the file.
+
+Use **Connections → Add account** for additional subscription accounts. **URL & setup** lists all accounts, lets you pause or resume each one, and supplies the provider URL and client configuration. **Refresh** reads quotas from each provider; background reads run every two minutes. Unavailable quotas remain unknown, and a failed read retains the previous value with its timestamp. The dashboard refreshes cached metadata every 30 seconds.
+
+Start these accounts from scratch. There is no codex-lb migration or account import from the former companion backend. Existing services and their files are left untouched. The Go backend does not read the old SQLite database.
+
+For OpenCode, add a Zen or Go key directly. Each credential is a separate connection. Model discovery loads the available choices; credential validity is confirmed by the first inference request. Routing follows the current [OpenCode inference API](https://opencode.ai/v2/docs/console/api/inference/). Balance and reset reporting is not implemented for Zen/Go; use OpenCode Console for billing details.
+
+## Device keys and provider URLs
+
+Create a shared key and select its providers, accounts, and models. You can also register an existing device key value and assign its access here. No restrictions are inherited from another service. Key values are shown once and stored as SHA-256 hashes.
+
+Each provider keeps its own request and response shape:
+
+| Provider         | Base URL                                                      |
+| ---------------- | ------------------------------------------------------------- |
+| Codex            | `/providers/codex/codex/backend-api/codex`                    |
+| Codex compatible | `/providers/codex/codex/v1`                                   |
+| Claude Code      | `/providers/claude/claude`                                    |
+| Zen              | `/providers/zen/<connection-id>/openai/v1` or `/anthropic/v1` |
+| Go               | `/providers/go/<connection-id>/openai/v1` or `/anthropic/v1`  |
+
+Use `Authorization: Bearer <shared-key>` or `x-api-key: <shared-key>`. Copy the complete URLs from **URL & setup**. Codex supports Responses and compact; Claude supports Messages and count_tokens. HTTP and SSE are supported. Codex configuration sets `supports_websockets = false`.
+
+Use Claude Code for Claude subscription traffic. Set `ANTHROPIC_BASE_URL` to the Claude Code base URL above and `ANTHROPIC_AUTH_TOKEN` to your shared client key. Live greeting checks were run with the actual Claude Code CLI through this proxy. Current model IDs worked; the SDK catalog also lists legacy IDs that fail or are remapped by the client. See [the verification results](docs/verification.md).
+
+The app enforces provider, account, model, expiry, pause, and daily request policies before dispatch. The SDK selector filters every retry to the permitted provider and accounts. It cannot borrow credentials from a different provider or a larger account pool. Daily caps reserve authenticated provider requests atomically, including model discovery and failed attempts, and reset at midnight UTC. Raw SDK inference and management endpoints are blocked. SDK management calls run inside the process.
+
+## Storage and deployment
+
+`DATA_DIR/state.enc` contains AES-256-GCM encrypted credentials, account state, key policies, quota snapshots, sessions, and request metadata. `master.key` decrypts it. The SDK uses this encrypted store for login and token refresh; persistent plaintext credential files are not created. Temporary OAuth callback files are kept in the private `oauth-sessions` directory and consumed by the SDK. Files use owner-only permissions. One process can hold a data directory at a time.
+
+Back up the whole data directory while the service is stopped. Losing the master key makes the stored state unreadable. Activity retains 2,000 request metadata records and displays the most recent 100. Prompts and response bodies are not stored in activity. Dashboard sessions use HTTP-only cookies, and mutations reject foreign origins.
+
+Set `PUBLIC_URL` to the exact HTTPS origin provided by Tailscale Serve. Keep the service bound to loopback and forward your private tailnet hostname to port 4310. A container also runs a single Go process:
 
 ```sh
 docker compose up --build -d
 ```
 
-The compose file publishes port 4310 on loopback and stores state in a named volume. Set `PUBLIC_URL` in `.env` before starting it. Get the generated dashboard key locally with:
+The compose file publishes loopback port 4310 and keeps state in a named volume. Do not run two services against the same data directory. Runtime data, environment files, and local installation notes are excluded from Git and Docker build contexts.
 
-```sh
-docker compose exec ai-funnel cat /app/data/admin-token
-```
-
-## Storage and refresh
-
-`data/funnel.sqlite` stores encrypted connections, cached accounts, key policy, and private upstream credentials. `data/master.key` encrypts those records with AES-256-GCM. Generated client key values are shown once, then only their SHA-256 hashes remain. Registered Codex keys must also be retained encrypted because they are forwarded to codex-lb.
-
-Back up the entire data directory together, including the master key and dashboard token. Stop the server while copying SQLite files. Losing the master key makes the stored connections unreadable. Do not commit this directory or expose it through a file server.
-
-Provider metadata refreshes every two minutes. The dashboard reads cached state every 30 seconds. **Refresh** forces a provider read. A connection error preserves cached data, labels it as stale, and pauses automatic refresh until a manual retry or reconnect succeeds. Quota values are provider reports, not a local spending estimate. Unavailable values are never shown as zero.
-
-Activity keeps the latest 2,000 forwarded-request records and displays the most recent 100. Records contain connection, key, model, status, time, and duration. Prompts, response bodies, and credentials are not logged. The dashboard uses seven-day HTTP-only sessions and rejects cross-origin mutations.
-
-## Verify changes
-
-Use `pnpm format` to format the project and `pnpm lint:fix` to apply safe lint fixes. Oxlint checks JavaScript and TypeScript, including TSX. The local `project/no-em-dash` rule rejects literal em dashes in source text, including strings, JSX, and comments. It reports their locations without rewriting copy. Imported skills and provider logo assets keep their original formatting.
+## Checks
 
 ```sh
 pnpm lint
 pnpm format:check
-pnpm build
 pnpm test
+pnpm build
 pnpm exec playwright install chromium
 pnpm test:ui
 ```
 
-Gateway tests use controlled upstream servers to check policy enforcement, credential boundaries, native payloads, SSE, cancellation, and encrypted persistence. Browser tests exercise connection setup, account selection, shared key creation, pausing, reload persistence, mobile layout, reduced motion, and dialog keyboard focus.
+`pnpm format` runs Prettier and gofmt. `pnpm lint:fix` applies safe Oxlint fixes. The local `project/no-em-dash` rule rejects literal em dashes in JS/TS/TSX, including comments and UI text. Imported skills and provider logo assets keep their original formatting.
 
-The existing codex-lb pool is connected and live-verified. Native model discovery and one complete streaming Responses request passed. See [docs/live-codex.md](docs/live-codex.md) for this local setup. Claude and OpenCode still need live verification. See [docs/verification.md](docs/verification.md) for the inspected UI states and remaining verification boundaries.
+Backend tests run the embedded SDK with controlled executors and isolated state. They check authentication, account selection, native Responses and Messages, streaming, quotas, concurrent limits, and encrypted persistence. They do not prove live provider login or token refresh. Those require signing in to real accounts. See [docs/verification.md](docs/verification.md).
+
+The UI retains shadcn preset `b13HF9dX9O`. Provider SVGs come from [SVGL](https://github.com/pheralb/svgl/tree/main/static/library); its license is included beside the assets. CLIProxyAPI's license is in [LICENSES/CLIProxyAPI.txt](LICENSES/CLIProxyAPI.txt).

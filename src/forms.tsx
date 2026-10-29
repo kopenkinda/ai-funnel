@@ -1,9 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
   ArrowUpRight01Icon,
   Key01Icon,
-  ShieldCheckIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import {
@@ -13,7 +12,7 @@ import {
   type Provider,
   type PublicConnection,
   type PublicKey,
-} from "../server/types.ts";
+} from "./types.ts";
 import { api } from "./api.ts";
 import { CopyButton, Dialog, ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { Button } from "@/components/ui/button";
@@ -29,9 +28,7 @@ import {
 } from "@/components/ui/field";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DialogFooter } from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Badge } from "@/components/ui/badge";
 
@@ -49,243 +46,348 @@ export function ConnectionForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [method, setMethod] = useState<"oauth" | "token" | "file">("oauth");
+  const [authFile, setAuthFile] = useState<File | null>(null);
+  const subscription = provider === "codex" || provider === "claude";
+  const [login, setLogin] = useState<{
+    url: string;
+    state: string;
+    connectionId: string;
+  } | null>(null);
+  const [callback, setCallback] = useState("");
+  useEffect(() => {
+    if (!login) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const result = await api<{ status: string }>(
+          `/oauth/status?state=${encodeURIComponent(login!.state)}`,
+        );
+        if (!active) return;
+        if (result.status === "ok") {
+          await api(`/connections/${login!.connectionId}/sync`, "POST");
+          if (!active) return;
+          await onSaved();
+          onClose();
+          return;
+        }
+        if (result.status === "error") {
+          setError(
+            "Sign-in failed or expired. Close this dialog and try again.",
+          );
+          return;
+        }
+        timer = setTimeout(poll, 2000);
+      } catch (e) {
+        if (active) setError((e as Error).message);
+      }
+    }
+    timer = setTimeout(poll, 2000);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      void api(
+        `/oauth/session?state=${encodeURIComponent(login.state)}`,
+        "DELETE",
+      ).catch(() => {});
+    };
+  }, [login]);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
     setError("");
     const values = Object.fromEntries(new FormData(e.currentTarget));
     try {
-      await api(
-        reconnect ? `/connections/${reconnect.id}/login` : "/connections",
-        "POST",
-        { ...values, provider },
-      );
-      await onSaved();
-      onClose();
+      if (subscription && method !== "oauth") {
+        let auth: unknown;
+        if (method === "file") {
+          if (!authFile || authFile.size > 64 * 1024)
+            throw new Error("Choose a JSON credential file under 64 KB.");
+          try {
+            auth = JSON.parse(await authFile.text());
+          } catch {
+            throw new Error("Choose a valid JSON credential file.");
+          }
+        }
+        const connection = await api<PublicConnection>(
+          "/accounts/import",
+          "POST",
+          {
+            provider,
+            name: values.name,
+            ...(method === "file"
+              ? { auth }
+              : { token: values.token, accountId: values.accountId }),
+          },
+        );
+        await api(`/connections/${connection.id}/sync`, "POST");
+        await onSaved();
+        onClose();
+        return;
+      }
+      const connection =
+        reconnect ||
+        (await api<PublicConnection>("/connections", "POST", {
+          ...values,
+          provider,
+        }));
+      if (subscription) {
+        const result = await api<{
+          url?: string;
+          authorization_url?: string;
+          state: string;
+        }>("/oauth", "POST", { provider });
+        const url = result.authorization_url || result.url;
+        if (!url || !result.state)
+          throw new Error("Sign-in did not return an authorization URL.");
+        setLogin({ url, state: result.state, connectionId: connection.id });
+      } else {
+        await onSaved();
+        onClose();
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
-  const defaults = {
-    codex: "",
-    claude: "http://127.0.0.1:8317",
-    zen: "https://opencode.ai/inference",
-    go: "https://opencode.ai/inference/go",
-  };
   return (
     <Dialog
-      title={reconnect ? "Reconnect codex-lb" : "Connect a provider"}
-      description="Connect the service that manages your accounts."
-      onClose={() => {
-        if (!busy) onClose();
-      }}
+      title={
+        login
+          ? `Sign in to ${providerNames[provider]}`
+          : reconnect
+            ? "Add account"
+            : "Add provider"
+      }
+      description={
+        login
+          ? "Complete sign-in in your browser, then return here."
+          : "Accounts are managed directly by this app."
+      }
+      onClose={onClose}
     >
-      <form onSubmit={submit} key={provider} className="flex flex-col gap-6">
-        <FieldGroup>
-          {!reconnect && (
-            <>
+      {login ? (
+        <div className="flex flex-col gap-5">
+          <Button
+            render={<a href={login.url} target="_blank" rel="noreferrer" />}
+          >
+            Open sign-in <Icon icon={ArrowUpRight01Icon} />
+          </Button>
+          <p className="text-sm text-muted-foreground">
+            If the browser finishes on an unreachable localhost page, paste that
+            page's complete URL below.
+          </p>
+          <Field>
+            <FieldLabel htmlFor="oauth-callback">Callback URL</FieldLabel>
+            <Input
+              id="oauth-callback"
+              value={callback}
+              onChange={(e) => setCallback(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+          <Button
+            variant="outline"
+            disabled={!callback || busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                await api("/oauth/callback", "POST", {
+                  redirect_url: callback,
+                });
+                setCallback("");
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Complete sign-in
+          </Button>
+          <p role="status" className="text-sm text-muted-foreground">
+            Waiting for sign-in…
+          </p>
+          {error && <ErrorMessage>{error}</ErrorMessage>}
+        </div>
+      ) : (
+        <form onSubmit={submit} className="flex flex-col gap-6">
+          <FieldGroup>
+            {!reconnect && (
+              <>
+                <Field>
+                  <FieldLabel>Provider</FieldLabel>
+                  <ToggleGroup
+                    aria-label="Provider"
+                    value={[provider]}
+                    onValueChange={(v) => {
+                      if (v[0]) {
+                        setProvider(v[0] as Provider);
+                        setAuthFile(null);
+                        setError("");
+                      }
+                    }}
+                    variant="outline"
+                    spacing={0}
+                    className="w-full"
+                  >
+                    {providers.map((p) => (
+                      <ToggleGroupItem
+                        key={p}
+                        value={p}
+                        className="flex-1"
+                        disabled={busy}
+                      >
+                        {p === "zen"
+                          ? "Zen"
+                          : p === "go"
+                            ? "Go"
+                            : providerNames[p]}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="connection-name">Name</FieldLabel>
+                  <Input
+                    key={provider}
+                    id="connection-name"
+                    name="name"
+                    required
+                    maxLength={80}
+                    defaultValue={providerNames[provider]}
+                  />
+                </Field>
+              </>
+            )}
+            {subscription && (
               <Field>
-                <FieldLabel>Provider</FieldLabel>
+                <FieldLabel>Account source</FieldLabel>
                 <ToggleGroup
-                  aria-label="Provider"
-                  value={[provider]}
-                  onValueChange={(values) => {
-                    if (values[0]) setProvider(values[0] as Provider);
+                  aria-label="Account source"
+                  value={[method]}
+                  onValueChange={(v) => {
+                    if (v[0]) {
+                      setMethod(v[0] as typeof method);
+                      setAuthFile(null);
+                      setError("");
+                    }
                   }}
                   variant="outline"
                   spacing={0}
+                  disabled={busy}
                   className="w-full"
                 >
-                  {providers.map((p) => (
-                    <ToggleGroupItem
-                      key={p}
-                      value={p}
-                      className="flex-1"
-                      disabled={busy}
-                    >
-                      {p === "zen"
-                        ? "Zen"
-                        : p === "go"
-                          ? "Go"
-                          : providerNames[p]}
-                    </ToggleGroupItem>
-                  ))}
+                  <ToggleGroupItem value="oauth" className="flex-1">
+                    OAuth
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="token" className="flex-1">
+                    Auth token
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="file" className="flex-1">
+                    JSON file
+                  </ToggleGroupItem>
                 </ToggleGroup>
               </Field>
-              <Field>
-                <FieldLabel htmlFor="connection-name">
-                  Connection name
-                </FieldLabel>
-                <Input
-                  id="connection-name"
-                  name="name"
-                  required
-                  maxLength={80}
-                  defaultValue={
-                    provider === "codex"
-                      ? "Home Codex pool"
-                      : provider === "claude"
-                        ? "Claude subscriptions"
-                        : providerNames[provider]
-                  }
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="connection-url">Server URL</FieldLabel>
-                <Input
-                  id="connection-url"
-                  name="url"
-                  type="url"
-                  required
-                  defaultValue={defaults[provider]}
-                  placeholder="https://codex.example.com"
-                  spellCheck={false}
-                  autoCapitalize="none"
-                />
-              </Field>
-            </>
-          )}
-          {provider === "codex" ? (
-            <>
-              <Alert>
-                <Icon icon={ShieldCheckIcon} />
-                <AlertDescription>
-                  Sign in to codex-lb to load accounts and quotas. Account
-                  tokens stay in codex-lb.
-                </AlertDescription>
-              </Alert>
-              <FieldGroup className="sm:flex-row">
+            )}
+            {subscription && method === "token" && (
+              <>
                 <Field>
-                  <FieldLabel htmlFor="connection-username">
-                    Username
-                  </FieldLabel>
+                  <FieldLabel htmlFor="account-token">Auth token</FieldLabel>
                   <Input
-                    id="connection-username"
-                    name="username"
-                    autoComplete="username"
-                    placeholder="Optional"
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="connection-code">
-                    Two-factor code
-                  </FieldLabel>
-                  <Input
-                    id="connection-code"
-                    name="code"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    placeholder="If enabled"
-                  />
-                </Field>
-              </FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="connection-password">
-                  codex-lb password
-                </FieldLabel>
-                <Input
-                  id="connection-password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="If enabled"
-                />
-                <FieldDescription>
-                  Used once to create an encrypted session. Your password is
-                  never saved.
-                </FieldDescription>
-              </Field>
-              {!reconnect && (
-                <Field>
-                  <FieldLabel htmlFor="connection-api-key">
-                    codex-lb API key
-                  </FieldLabel>
-                  <Input
-                    id="connection-api-key"
-                    name="apiKey"
+                    id="account-token"
+                    key={provider}
+                    name="token"
                     type="password"
                     autoComplete="off"
-                    placeholder="sk-clb-…"
+                    spellCheck={false}
+                    required
+                    disabled={busy}
                   />
                   <FieldDescription>
-                    Optional. Used for model discovery.
+                    {provider === "claude"
+                      ? "Paste an OAuth access token or Claude setup token."
+                      : "Paste the access_token from your Codex login."}{" "}
+                    To keep automatic refresh, import the credential file
+                    instead.
                   </FieldDescription>
                 </Field>
-              )}
-            </>
-          ) : provider === "claude" ? (
-            <>
+                {provider === "codex" && (
+                  <Field>
+                    <FieldLabel htmlFor="account-id">
+                      Account ID (optional)
+                    </FieldLabel>
+                    <Input
+                      id="account-id"
+                      name="accountId"
+                      autoComplete="off"
+                      spellCheck={false}
+                      disabled={busy}
+                    />
+                    <FieldDescription>
+                      Usually read from the token automatically.
+                    </FieldDescription>
+                  </Field>
+                )}
+              </>
+            )}
+            {subscription && method === "file" && (
               <Field>
-                <FieldLabel htmlFor="connection-management-key">
-                  CLIProxyAPI management key
+                <FieldLabel htmlFor="account-file">
+                  {provider === "codex" ? "auth.json" : "Credential JSON"}
                 </FieldLabel>
                 <Input
-                  id="connection-management-key"
-                  name="managementKey"
-                  type="password"
+                  key={provider}
+                  id="account-file"
+                  type="file"
+                  accept=".json,application/json"
                   required
-                  autoComplete="off"
+                  disabled={busy}
+                  onChange={(e) => setAuthFile(e.target.files?.[0] ?? null)}
                 />
+                <FieldDescription>
+                  {provider === "codex"
+                    ? "Choose ~/.codex/auth.json or a CLIProxyAPI credential file."
+                    : "Choose a CLIProxyAPI credential file or Claude Code's .credentials.json."}{" "}
+                  Credentials are encrypted after import.
+                </FieldDescription>
               </Field>
+            )}
+            {(provider === "zen" || provider === "go") && (
               <Field>
                 <FieldLabel htmlFor="connection-api-key">
-                  CLIProxyAPI client key
+                  OpenCode API key
                 </FieldLabel>
                 <Input
                   id="connection-api-key"
                   name="apiKey"
                   type="password"
-                  required
                   autoComplete="off"
+                  required
                 />
-                <FieldDescription>
-                  Claude subscription logins stay in CLIProxyAPI. Management API
-                  v8 is required.
-                </FieldDescription>
               </Field>
-            </>
-          ) : (
-            <Field>
-              <FieldLabel htmlFor="connection-api-key">
-                OpenCode API key
-              </FieldLabel>
-              <Input
-                id="connection-api-key"
-                name="apiKey"
-                type="password"
-                required
-                autoComplete="off"
-              />
-              <FieldDescription>
-                Each credential is a separate connection.{" "}
-                {provider === "go" ? "Go subscription usage" : "Zen balance"}{" "}
-                stays with OpenCode.
-              </FieldDescription>
-            </Field>
-          )}
-          {error && <ErrorMessage>{error}</ErrorMessage>}
-        </FieldGroup>
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" disabled={busy}>
-            {busy && <Spinner data-icon="inline-start" />}
-            {busy
-              ? "Connecting…"
-              : reconnect
-                ? "Reconnect"
-                : "Connect provider"}
-          </Button>
-        </DialogFooter>
-      </form>
+            )}
+            {error && <ErrorMessage>{error}</ErrorMessage>}
+          </FieldGroup>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy}>
+              {busy && <Spinner data-icon="inline-start" />}
+              {subscription
+                ? method === "oauth"
+                  ? "Continue to sign-in"
+                  : "Import account"
+                : "Add provider"}
+            </Button>
+          </DialogFooter>
+        </form>
+      )}
     </Dialog>
   );
 }
@@ -400,15 +502,6 @@ export function KeyForm({
               onValueChange={(v) => {
                 if (!v[0]) return;
                 setMode(v[0] as "create" | "import");
-                if (v[0] === "import")
-                  setGrants((prev) =>
-                    prev.map((g) =>
-                      connections.find((c) => c.id === g.connectionId)
-                        ?.provider === "codex"
-                        ? { ...g, accountIds: null }
-                        : g,
-                    ),
-                  );
               }}
               variant="outline"
               spacing={0}
@@ -419,7 +512,7 @@ export function KeyForm({
                 Create key
               </ToggleGroupItem>
               <ToggleGroupItem value="import" className="flex-1">
-                Use existing Codex key
+                Use existing key
               </ToggleGroupItem>
             </ToggleGroup>
           </Field>
@@ -435,20 +528,17 @@ export function KeyForm({
           </Field>
           {mode === "import" && (
             <Field>
-              <FieldLabel htmlFor="existing-key">
-                Existing codex-lb key
-              </FieldLabel>
+              <FieldLabel htmlFor="existing-key">Existing API key</FieldLabel>
               <Input
                 id="existing-key"
                 name="existingKey"
                 type="password"
                 required
                 autoComplete="off"
-                placeholder="sk-clb-…"
+                placeholder="Your existing device key"
               />
               <FieldDescription>
-                Codex restrictions stay enforced by codex-lb. Choose access to
-                other providers below.
+                Choose the providers and accounts this key can use.
               </FieldDescription>
             </Field>
           )}
@@ -491,12 +581,7 @@ export function KeyForm({
                       </Field>
                       {grant && (
                         <FieldGroup>
-                          {c.provider === "codex" && mode === "import" ? (
-                            <FieldDescription>
-                              Account access inherited from the existing key.
-                            </FieldDescription>
-                          ) : c.provider === "codex" ||
-                            c.provider === "claude" ? (
+                          {c.provider === "codex" || c.provider === "claude" ? (
                             <FieldSet>
                               <FieldLegend variant="label" className="sr-only">
                                 Accounts for {c.name}
@@ -518,21 +603,13 @@ export function KeyForm({
                                 </Field>
                                 {grant.accountIds !== null &&
                                   c.accounts.map((a) => (
-                                    <Field
-                                      key={a.id}
-                                      orientation="horizontal"
-                                      data-disabled={
-                                        c.provider === "claude" && !a.prefix
-                                      }
-                                    >
+                                    <Field key={a.id} orientation="horizontal">
                                       <Checkbox
                                         id={`account-${c.id}-${a.id}`}
                                         checked={grant.accountIds!.includes(
                                           a.id,
                                         )}
-                                        disabled={
-                                          c.provider === "claude" && !a.prefix
-                                        }
+
                                         onCheckedChange={(checked) =>
                                           update(c.id, {
                                             accountIds: checked
@@ -549,13 +626,6 @@ export function KeyForm({
                                         >
                                           {a.name}
                                         </FieldLabel>
-                                        {c.provider === "claude" &&
-                                          !a.prefix && (
-                                            <FieldDescription>
-                                              Configure a routing prefix in
-                                              CLIProxyAPI first.
-                                            </FieldDescription>
-                                          )}
                                       </FieldContent>
                                     </Field>
                                   ))}
@@ -665,6 +735,9 @@ export function ConnectionDetails({
   origin: string;
   onClose: () => void;
 }) {
+  const [accountStates, setAccountStates] = useState<Record<string, boolean>>(
+    {},
+  );
   const [format, setFormat] = useState<"openai" | "anthropic">("openai");
   const [error, setError] = useState("");
   const root = `${origin}/providers/${c.provider}/${c.id}`;
@@ -703,6 +776,46 @@ export function ConnectionDetails({
           {c.models.length} models
         </Badge>
       </div>
+      {(c.provider === "codex" || c.provider === "claude") &&
+        c.accounts.length > 0 && (
+          <div className="flex flex-col gap-2" aria-label="Manage accounts">
+            {c.accounts.map((account) => {
+              const enabled =
+                accountStates[account.id] ?? account.status !== "paused";
+              return (
+                <div
+                  key={account.id}
+                  className="flex items-center justify-between gap-3 border-b py-2 last:border-0"
+                >
+                  <span className="truncate text-sm">
+                    {account.email || account.name}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        await api(
+                          `/accounts/${encodeURIComponent(account.id)}`,
+                          "PATCH",
+                          { enabled: !enabled },
+                        );
+                        setAccountStates((previous) => ({
+                          ...previous,
+                          [account.id]: !enabled,
+                        }));
+                      } catch (e) {
+                        setError((e as Error).message);
+                      }
+                    }}
+                  >
+                    {enabled ? "Pause" : "Resume"}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       {(c.provider === "zen" || c.provider === "go") && (
         <ToggleGroup
           value={[format]}
@@ -766,27 +879,6 @@ export function ConnectionDetails({
           </Field>
         )}
       </FieldGroup>
-      <Separator />
-      <Button
-        variant="outline"
-        nativeButton={false}
-        render={
-          <a
-            href={
-              c.provider === "zen" || c.provider === "go"
-                ? "https://opencode.ai"
-                : c.provider === "claude"
-                  ? `${c.url}/management.html`
-                  : c.url
-            }
-            target="_blank"
-            rel="noreferrer"
-          />
-        }
-      >
-        Manage upstream accounts
-        <Icon icon={ArrowUpRight01Icon} data-icon="inline-end" />
-      </Button>
       {error && <ErrorMessage>{error}</ErrorMessage>}
     </Dialog>
   );
