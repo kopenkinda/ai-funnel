@@ -8,6 +8,7 @@ import {
   ArrowUpRight01Icon,
   Cancel01Icon,
   Delete02Icon,
+  Edit02Icon,
   Key01Icon,
   Layers01Icon,
   Link01Icon,
@@ -95,6 +96,7 @@ export function App() {
   );
   const [details, setDetails] = useState<PublicConnection | null>(null);
   const [reconnect, setReconnect] = useState<PublicConnection | null>(null);
+  const [editKey, setEditKey] = useState<PublicKey | null>(null);
   const [remove, setRemove] = useState<{
     type: "connections" | "keys";
     id: string;
@@ -390,6 +392,10 @@ export function App() {
                     key={k.id}
                     clientKey={k}
                     connections={connections}
+                    onEdit={() => {
+                      setEditKey(k);
+                      setModal("key");
+                    }}
                     busy={!!busy}
                     onToggle={() =>
                       void action(k.id, () =>
@@ -451,8 +457,13 @@ export function App() {
       )}
       {modal === "key" && (
         <KeyForm
+          key={editKey?.id ?? "new"}
+          clientKey={editKey ?? undefined}
           connections={connections}
-          onClose={() => setModal(null)}
+          onClose={() => {
+            setModal(null);
+            setEditKey(null);
+          }}
           onSaved={reload}
         />
       )}
@@ -627,12 +638,14 @@ function KeyRow({
   connections,
   busy,
   onToggle,
+  onEdit,
   onRemove,
 }: {
   clientKey: PublicKey;
   connections: PublicConnection[];
   busy: boolean;
   onToggle: () => void;
+  onEdit: () => void;
   onRemove: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -651,6 +664,15 @@ function KeyRow({
             <Badge variant={expired || !k.enabled ? "secondary" : "outline"}>
               {expired ? "Expired" : k.enabled ? "Active" : "Paused"}
             </Badge>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              disabled={busy}
+              aria-label={`Edit ${k.name}`}
+              onClick={onEdit}
+            >
+              <Icon icon={Edit02Icon} />
+            </Button>
             <Button
               variant="ghost"
               size="icon-sm"

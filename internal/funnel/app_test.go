@@ -309,16 +309,14 @@ func TestEmbeddedService(t *testing.T) {
 		read("response.completed")
 		send()
 		read("Daily request limit")
-		_ = store.change(func(d *diskState) error {
-			for id, k := range d.Keys {
-				if k.Hash == digest(clientKey) {
-					k.DailyLimit = nil
-					k.Grants[0].AccountIDs = []string{"account-a"}
-					d.Keys[id] = k
+		for id, k := range store.read().Keys {
+			if k.Hash == digest(clientKey) {
+				status, b := request("PATCH", "/api/keys/"+id, admin, `{"dailyLimit":null,"grants":[{"connectionId":"codex","accountIds":["account-a"],"models":null}]}`)
+				if status != 200 {
+					t.Fatalf("edit WebSocket access: %d %s", status, b)
 				}
 			}
-			return nil
-		})
+		}
 		send()
 		read("Account access changed")
 		capture.mu.Lock()
@@ -476,6 +474,86 @@ func TestEmbeddedService(t *testing.T) {
 		status, _ = request("POST", "/providers/claude/claude/v1/messages", key.Token, fmt.Sprintf(`{"model":%q,"max_tokens":10,"messages":[]}`, model))
 		if status < 400 {
 			t.Fatal("cross-provider routing was allowed")
+		}
+	})
+	t.Run("key edits preserve credentials and immediately change access", func(t *testing.T) {
+		clientKey := makeKey("null")
+		var before Key
+		for _, k := range store.read().Keys {
+			if k.Hash == digest(clientKey) {
+				before = k
+			}
+		}
+		endpoint := "/api/keys/" + before.ID
+		status, _ := request("GET", "/api/connections/codex/models", "", "")
+		if status != 401 {
+			t.Fatal("catalog bypassed dashboard authentication", status)
+		}
+		status, b := request("GET", "/api/connections/codex/models", admin, "")
+		if status != 200 || !strings.Contains(string(b), model) {
+			t.Fatalf("provider catalog missing: %d %s", status, b)
+		}
+		status, _ = request("PATCH", endpoint, clientKey, `{"name":"Not authorized"}`)
+		if status != 401 {
+			t.Fatal("client key edited itself", status)
+		}
+		patch := `{"name":"Updated devices","dailyLimit":100,"expiresAt":"2099-01-01T00:00:00Z","grants":[{"connectionId":"codex","accountIds":["account-b@example.com.json"],"models":["unselected-model"]},{"connectionId":"claude","accountIds":["account-c"],"models":null}]}`
+		status, b = request("PATCH", endpoint, admin, patch)
+		if status != 200 || strings.Contains(string(b), before.Hash) || strings.Contains(string(b), clientKey) {
+			t.Fatalf("edit failed or leaked key: %d", status)
+		}
+		status, _ = request("POST", path, clientKey, payload)
+		if status != 403 {
+			t.Fatal("old model access survived edit", status)
+		}
+		status, b = request("GET", "/providers/claude/claude/v1/models", clientKey, "")
+		if status != 200 || !strings.Contains(string(b), "claude-") {
+			t.Fatal("new provider access not applied", status)
+		}
+		for _, invalid := range []string{
+			`{"grants":[{"connectionId":"codex","accountIds":["account-c"],"models":null}]}`,
+			`{"grants":[{"connectionId":"codex","accountIds":null,"models":[]}]}`,
+			`{"dailyLimit":0}`,
+		} {
+			status, _ = request("PATCH", endpoint, admin, invalid)
+			if status != 400 {
+				t.Fatal("invalid edit accepted", status)
+			}
+		}
+		if len(store.read().Keys[before.ID].Grants) != 2 {
+			t.Fatal("invalid edit changed existing grants")
+		}
+		status, _ = request("PATCH", endpoint, admin, `{"enabled":false}`)
+		if status != 200 {
+			t.Fatal(status)
+		}
+		status, _ = request("PATCH", endpoint, admin, `{"dailyLimit":null,"expiresAt":null,"grants":[{"connectionId":"codex","accountIds":null,"models":null}]}`)
+		if status != 200 {
+			t.Fatal(status)
+		}
+		status, _ = request("GET", "/providers/claude/claude/v1/models", clientKey, "")
+		if status != 401 {
+			t.Fatal("editing re-enabled a paused key", status)
+		}
+		status, _ = request("PATCH", endpoint, admin, `{"enabled":true}`)
+		if status != 200 {
+			t.Fatal(status)
+		}
+		status, _ = request("POST", path, clientKey, payload)
+		if status != 200 {
+			t.Fatal("original credential stopped working", status)
+		}
+		status, _ = request("GET", "/providers/claude/claude/v1/models", clientKey, "")
+		if status != 403 {
+			t.Fatal("removed provider access survived", status)
+		}
+		persisted, err := NewStore(store.dir, admin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after := persisted.read().Keys[before.ID]
+		if after.Hash != before.Hash || after.Prefix != before.Prefix || after.CreatedAt != before.CreatedAt || after.DailyLimit != nil || after.ExpiresAt != nil || after.LastUsedAt == nil {
+			t.Fatal("edit changed key identity or lost persisted settings")
 		}
 	})
 	t.Run("paused and deleted assignments fail closed", func(t *testing.T) {

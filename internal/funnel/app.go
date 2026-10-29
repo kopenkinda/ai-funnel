@@ -278,6 +278,19 @@ func (a *App) dashboard(c *gin.Context) {
 			fail(c, 404, "Connection not found.")
 			return
 		}
+		if len(parts) == 3 && parts[2] == "models" && m == "GET" {
+			models, err := a.providerModels(c.Request.Context(), conn.Provider, nil)
+			if err != nil {
+				fail(c, 502, "Provider model catalog unavailable.")
+				return
+			}
+			data := []gin.H{}
+			for _, id := range models {
+				data = append(data, gin.H{"id": id, "object": "model"})
+			}
+			c.JSON(200, gin.H{"data": data})
+			return
+		}
 		if len(parts) == 3 && parts[2] == "sync" && m == "POST" {
 			a.refresh(c.Request.Context(), conn)
 			c.JSON(200, a.publicConnection(conn))
@@ -351,31 +364,14 @@ func (a *App) dashboard(c *gin.Context) {
 		return
 	}
 	if len(parts) == 2 && parts[0] == "keys" {
-		var b struct {
-			Enabled *bool `json:"enabled"`
-		}
 		if m == "PATCH" {
-			if !decode(c, &b) {
-				return
-			}
-			if b.Enabled == nil {
-				fail(c, 400, "Supply the key state.")
-				return
-			}
+			a.updateKey(c, parts[1])
+			return
 		}
 		d := a.store.read()
 		k, ok := d.Keys[parts[1]]
 		if !ok {
 			fail(c, 404, "Key not found.")
-			return
-		}
-		if m == "PATCH" {
-			k.Enabled = *b.Enabled
-			if !a.save(c, func(d *diskState) error { d.Keys[k.ID] = k; return nil }) {
-				return
-			}
-			k.Hash = ""
-			c.JSON(200, k)
 			return
 		}
 		if m == "DELETE" {
@@ -420,61 +416,4 @@ func (a *App) state(c *gin.Context) {
 		reverse[len(logs)-1-i] = v
 	}
 	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL, "daily": d.Daily, "hourly": d.Hourly, "trackingAt": d.TrackingAt, "pricing": gin.H{"asOf": "2026-10-29", "openai": openAIPrices, "claude": claudePrices}, "settings": gin.H{"autoUseResets": d.Settings.AutoUseResets, "hasHubKey": d.Settings.HubTokenHash != ""}})
-}
-func (a *App) createKey(c *gin.Context) {
-	var b struct {
-		Name       string     `json:"name"`
-		Existing   string     `json:"existingKey"`
-		Grants     []Grant    `json:"grants"`
-		ExpiresAt  *time.Time `json:"expiresAt"`
-		DailyLimit *int       `json:"dailyLimit"`
-	}
-	if !decode(c, &b) {
-		return
-	}
-	if strings.TrimSpace(b.Name) == "" || len(b.Name) > 80 || len(b.Grants) == 0 || len(b.Grants) > 30 || (b.ExpiresAt != nil && !b.ExpiresAt.After(now())) || (b.DailyLimit != nil && *b.DailyLimit < 1) {
-		fail(c, 400, "Supply a name, valid access, and future expiration.")
-		return
-	}
-	value := b.Existing
-	if value == "" {
-		value = "sk-af-" + token()
-	} else if len(value) < 16 || strings.ContainsAny(value, " \t\r\n") {
-		fail(c, 400, "Supply a valid existing key.")
-		return
-	}
-	d := a.store.read()
-	seen := map[string]bool{}
-	for _, g := range b.Grants {
-		conn, ok := d.Connections[g.ConnectionID]
-		if !ok || seen[g.ConnectionID] || (g.AccountIDs != nil && len(g.AccountIDs) == 0) || (g.Models != nil && len(g.Models) == 0) {
-			fail(c, 400, "Select valid connections and account access.")
-			return
-		}
-		seen[g.ConnectionID] = true
-		for _, id := range g.AccountIDs {
-			if auth, ok := a.core.GetByID(id); !ok || auth.Provider != conn.Provider {
-				fail(c, 400, "Account not found in this provider.")
-				return
-			}
-		}
-	}
-	k := Key{ID: token()[:24], Name: b.Name, Hash: digest(value), Prefix: value[:min(8, len(value)/2)], Enabled: true, ExpiresAt: b.ExpiresAt, DailyLimit: b.DailyLimit, Grants: b.Grants, Imported: b.Existing != "", CreatedAt: now()}
-	if !a.save(c, func(d *diskState) error {
-		for _, old := range d.Keys {
-			if old.Hash == k.Hash {
-				return fmt.Errorf("key already registered")
-			}
-		}
-		d.Keys[k.ID] = k
-		return nil
-	}) {
-		return
-	}
-	k.Hash = ""
-	var shown any = value
-	if b.Existing != "" {
-		shown = nil
-	}
-	c.JSON(201, gin.H{"key": k, "token": shown})
 }

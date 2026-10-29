@@ -109,6 +109,141 @@ test("login fits a narrow viewport and keeps demo access removed", async ({
   ).toBe(true);
 });
 
+test("existing key access can be edited with provider model selections", async ({
+  page,
+  request,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const headers = { Authorization: "Bearer browser-test-dashboard-key" };
+  await page.request.post("/api/session", {
+    data: { token: "browser-test-dashboard-key" },
+  });
+  const catalog = await request
+    .get("/api/connections/codex/models", { headers })
+    .then((r) => r.json());
+  const models: string[] = catalog.data
+    .slice(0, 2)
+    .map((m: { id: string }) => m.id);
+  expect(models).toHaveLength(2);
+  const created = await request
+    .post("/api/keys", {
+      headers,
+      data: {
+        name: "Editable devices",
+        dailyLimit: 50,
+        grants: [{ connectionId: "codex", accountIds: null, models: null }],
+      },
+    })
+    .then((r) => r.json());
+  await request.post("/api/connections", {
+    headers,
+    data: { provider: "claude", name: "Claude" },
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "API keys", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Edit Editable devices", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Edit API key" });
+  await expect(dialog.getByLabel("Key name", { exact: true })).toHaveValue(
+    "Editable devices",
+  );
+  await expect(dialog.getByLabel("Requests per day")).toHaveValue("50");
+  await expect(dialog.getByRole("group", { name: "Key source" })).toHaveCount(
+    0,
+  );
+  await dialog
+    .getByRole("checkbox", { name: "All models", exact: true })
+    .uncheck();
+  const picker = dialog.getByRole("combobox", {
+    name: "Codex models",
+    exact: true,
+  });
+  await expect(picker).toBeEnabled();
+  for (const model of models) {
+    await picker.fill(model);
+    await page.getByRole("option", { name: model, exact: true }).click();
+  }
+  await picker.fill("");
+  await picker.click();
+  await page.getByRole("option", { name: models[1], exact: true }).waitFor();
+  await page.screenshot({
+    path: "/tmp/ai-funnel-model-picker.png",
+    fullPage: true,
+  });
+  if ((await picker.getAttribute("aria-expanded")) === "true")
+    await picker.press("Escape");
+  await expect(dialog).toBeVisible();
+  const selected = dialog.getByLabel("Selected models", { exact: true });
+  for (const model of models) await expect(selected).toContainText(model);
+  await selected
+    .getByLabel(models[0], { exact: true })
+    .getByRole("button")
+    .click();
+  await expect(selected).not.toContainText(models[0]);
+  await dialog.getByRole("checkbox", { name: "Claude", exact: true }).check();
+  await dialog.getByLabel("Key name", { exact: true }).fill("Coding tools");
+  await dialog.getByLabel("Requests per day").fill("");
+  await page.screenshot({
+    path: "/tmp/ai-funnel-key-editor-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "/tmp/ai-funnel-key-editor-mobile.png",
+    fullPage: true,
+  });
+  await dialog
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  const state = await request
+    .get("/api/state", { headers })
+    .then((r) => r.json());
+  const updated = state.keys.find(
+    (k: { id: string }) => k.id === created.key.id,
+  );
+  expect(updated.name).toBe("Coding tools");
+  expect(updated.dailyLimit).toBeNull();
+  expect(updated.prefix).toBe(created.key.prefix);
+  expect(updated.grants).toEqual([
+    { connectionId: "codex", accountIds: null, models: [models[1]] },
+    { connectionId: "claude", accountIds: null, models: null },
+  ]);
+  await page.reload();
+  await page.getByRole("button", { name: "API keys", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Edit Coding tools", exact: true })
+    .click();
+  await expect(dialog.getByLabel("Selected models")).toContainText(models[1]);
+  await expect(
+    dialog.getByRole("checkbox", { name: "Claude", exact: true }),
+  ).toBeChecked();
+  await dialog.getByRole("checkbox", { name: "Claude", exact: true }).uncheck();
+  await dialog
+    .getByRole("checkbox", { name: "All models", exact: true })
+    .check();
+  await dialog
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  const visible = await request.get("/providers/codex/codex/v1/models", {
+    headers: { Authorization: `Bearer ${created.token}` },
+  });
+  expect(visible.status()).toBe(200);
+  expect((await visible.json()).data.length).toBeGreaterThan(1);
+  const removed = await request.get("/providers/claude/claude/v1/models", {
+    headers: { Authorization: `Bearer ${created.token}` },
+  });
+  expect(removed.status()).toBe(403);
+});
+
 test("usage shows reported limits and persists email privacy", async ({
   page,
 }) => {

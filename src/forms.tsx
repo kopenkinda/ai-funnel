@@ -32,6 +32,17 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { Badge } from "@/components/ui/badge";
+import {
+  Combobox,
+  ComboboxChip,
+  ComboboxChips,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxValue,
+} from "@/components/ui/combobox";
 
 export function ConnectionForm({
   onClose,
@@ -365,15 +376,19 @@ export function ConnectionForm({
 
 export function KeyForm({
   connections,
+  clientKey,
   onClose,
   onSaved,
 }: {
   connections: PublicConnection[];
+  clientKey?: PublicKey;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [mode, setMode] = useState<"create" | "import">("create");
-  const [grants, setGrants] = useState<Grant[]>([]);
+  const [grants, setGrants] = useState<Grant[]>(() =>
+    structuredClone(clientKey?.grants ?? []),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<{
@@ -391,16 +406,30 @@ export function KeyForm({
     setError("");
     const data = Object.fromEntries(new FormData(e.currentTarget));
     try {
+      const settings = {
+        name: data.name,
+        grants,
+        dailyLimit: data.dailyLimit ? Number(data.dailyLimit) : null,
+        ...(clientKey &&
+        data.expiresAt === (clientKey.expiresAt?.slice(0, 10) ?? "")
+          ? {}
+          : {
+              expiresAt: data.expiresAt
+                ? new Date(String(data.expiresAt)).toISOString()
+                : null,
+            }),
+      };
+      if (clientKey) {
+        await api(`/keys/${clientKey.id}`, "PATCH", settings);
+        await onSaved();
+        onClose();
+        return;
+      }
       const result = await api<{ token: string | null; key: PublicKey }>(
         "/keys",
         "POST",
         {
-          name: data.name,
-          grants,
-          dailyLimit: data.dailyLimit ? Number(data.dailyLimit) : null,
-          expiresAt: data.expiresAt
-            ? new Date(String(data.expiresAt)).toISOString()
-            : null,
+          ...settings,
           existingKey: mode === "import" ? data.existingKey : "",
         },
       );
@@ -460,35 +489,36 @@ export function KeyForm({
     );
   return (
     <Dialog
-      title="Add a shared key"
-      description="One key for the providers and accounts you choose."
+      title={clientKey ? "Edit API key" : "Add a shared key"}
       onClose={() => {
         if (!busy) onClose();
       }}
     >
       <form onSubmit={submit} className="flex flex-col gap-6">
         <FieldGroup>
-          <Field>
-            <FieldLabel>Key source</FieldLabel>
-            <ToggleGroup
-              value={[mode]}
-              onValueChange={(v) => {
-                if (!v[0]) return;
-                setMode(v[0] as "create" | "import");
-              }}
-              variant="outline"
-              spacing={0}
-              className="w-full"
-              aria-label="Key source"
-            >
-              <ToggleGroupItem value="create" className="flex-1">
-                Create key
-              </ToggleGroupItem>
-              <ToggleGroupItem value="import" className="flex-1">
-                Use existing key
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </Field>
+          {!clientKey && (
+            <Field>
+              <FieldLabel>Key source</FieldLabel>
+              <ToggleGroup
+                value={[mode]}
+                onValueChange={(v) => {
+                  if (!v[0]) return;
+                  setMode(v[0] as "create" | "import");
+                }}
+                variant="outline"
+                spacing={0}
+                className="w-full"
+                aria-label="Key source"
+              >
+                <ToggleGroupItem value="create" className="flex-1">
+                  Create key
+                </ToggleGroupItem>
+                <ToggleGroupItem value="import" className="flex-1">
+                  Use existing key
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
+          )}
           <Field>
             <FieldLabel htmlFor="key-name">Key name</FieldLabel>
             <Input
@@ -497,9 +527,10 @@ export function KeyForm({
               required
               maxLength={80}
               placeholder="Personal devices"
+              defaultValue={clientKey?.name}
             />
           </Field>
-          {mode === "import" && (
+          {!clientKey && mode === "import" && (
             <Field>
               <FieldLabel htmlFor="existing-key">Existing API key</FieldLabel>
               <Input
@@ -522,11 +553,15 @@ export function KeyForm({
                 connections.map((c) => {
                   const grant = grants.find((g) => g.connectionId === c.id);
                   return (
-                    <FieldSet key={c.id} className="rounded-2xl border p-4">
+                    <FieldSet
+                      key={c.id}
+                      className="gap-3 rounded-2xl border p-4"
+                    >
                       <Field orientation="horizontal">
                         <Checkbox
                           id={`grant-${c.id}`}
                           checked={!!grant}
+                          disabled={busy}
                           onCheckedChange={(checked) =>
                             setGrants((prev) =>
                               checked
@@ -546,14 +581,16 @@ export function KeyForm({
                           <FieldLabel htmlFor={`grant-${c.id}`}>
                             <PrivateText>{c.name}</PrivateText>
                           </FieldLabel>
-                          <FieldDescription>
-                            {providerNames[c.provider]}
-                          </FieldDescription>
+                          {c.name !== providerNames[c.provider] && (
+                            <FieldDescription>
+                              {providerNames[c.provider]}
+                            </FieldDescription>
+                          )}
                         </FieldContent>
                         <ProviderIcon provider={c.provider} small />
                       </Field>
                       {grant && (
-                        <FieldGroup>
+                        <FieldGroup className="gap-4">
                           <FieldSet>
                             <FieldLegend variant="label" className="sr-only">
                               Accounts for <PrivateText>{c.name}</PrivateText>
@@ -563,6 +600,7 @@ export function KeyForm({
                                 <Checkbox
                                   id={`pool-${c.id}`}
                                   checked={grant.accountIds === null}
+                                  disabled={busy}
                                   onCheckedChange={(checked) =>
                                     update(c.id, {
                                       accountIds: checked ? null : [],
@@ -579,6 +617,7 @@ export function KeyForm({
                                     <Checkbox
                                       id={`account-${c.id}-${a.id}`}
                                       checked={grant.accountIds!.includes(a.id)}
+                                      disabled={busy}
 
                                       onCheckedChange={(checked) =>
                                         update(c.id, {
@@ -601,29 +640,12 @@ export function KeyForm({
                                 ))}
                             </FieldGroup>
                           </FieldSet>
-                          <Field>
-                            <FieldLabel htmlFor={`models-${c.id}`}>
-                              Allowed models
-                            </FieldLabel>
-                            <Input
-                              id={`models-${c.id}`}
-                              placeholder="All models"
-                              onChange={(e) =>
-                                update(c.id, {
-                                  models: e.target.value.trim()
-                                    ? e.target.value
-                                        .split(",")
-                                        .map((s) => s.trim())
-                                        .filter(Boolean)
-                                    : null,
-                                })
-                              }
-                            />
-                            <FieldDescription>
-                              Separate model IDs with commas. Leave empty to
-                              allow all.
-                            </FieldDescription>
-                          </Field>
+                          <ModelAccess
+                            connection={c}
+                            value={grant.models}
+                            disabled={busy}
+                            onChange={(models) => update(c.id, { models })}
+                          />
                         </FieldGroup>
                       )}
                     </FieldSet>
@@ -646,6 +668,7 @@ export function KeyForm({
                 min="1"
                 step="1"
                 placeholder="No limit"
+                defaultValue={clientKey?.dailyLimit ?? ""}
               />
             </Field>
             <Field>
@@ -654,14 +677,15 @@ export function KeyForm({
                 id="key-expiry"
                 name="expiresAt"
                 type="date"
-                min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
+                min={
+                  clientKey
+                    ? undefined
+                    : new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+                }
+                defaultValue={clientKey?.expiresAt?.slice(0, 10) ?? ""}
               />
             </Field>
           </FieldGroup>
-          <FieldDescription>
-            Optional request caps reset at midnight UTC. Upstream subscription
-            limits still apply.
-          </FieldDescription>
           {error && <ErrorMessage>{error}</ErrorMessage>}
         </FieldGroup>
         <DialogFooter>
@@ -673,7 +697,16 @@ export function KeyForm({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={busy || !grants.length}>
+          <Button
+            type="submit"
+            disabled={
+              busy ||
+              !grants.length ||
+              grants.some(
+                (g) => g.models?.length === 0 || g.accountIds?.length === 0,
+              )
+            }
+          >
             {busy ? (
               <Spinner data-icon="inline-start" />
             ) : (
@@ -681,13 +714,130 @@ export function KeyForm({
             )}
             {busy
               ? "Saving…"
-              : mode === "import"
-                ? "Register existing key"
-                : "Create key"}
+              : clientKey
+                ? "Save changes"
+                : mode === "import"
+                  ? "Register existing key"
+                  : "Create key"}
           </Button>
         </DialogFooter>
       </form>
     </Dialog>
+  );
+}
+
+function ModelAccess({
+  connection,
+  value,
+  disabled,
+  onChange,
+}: {
+  connection: PublicConnection;
+  value: string[] | null;
+  disabled: boolean;
+  onChange: (models: string[] | null) => void;
+}) {
+  const [models, setModels] = useState(connection.models);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    api<{ data: { id: string }[] }>(`/connections/${connection.id}/models`)
+      .then((result) => {
+        if (active) setModels(result.data.map((model) => model.id));
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [connection.id, attempt]);
+  return (
+    <FieldSet className="gap-2">
+      <FieldLegend variant="label">Models</FieldLegend>
+      <FieldGroup className="gap-3">
+        <Field orientation="horizontal">
+          <Checkbox
+            id={`all-models-${connection.id}`}
+            checked={value === null}
+            disabled={disabled}
+            onCheckedChange={(checked) => onChange(checked ? null : [])}
+          />
+          <FieldLabel htmlFor={`all-models-${connection.id}`}>
+            All models
+          </FieldLabel>
+        </Field>
+        {value !== null && (
+          <Field>
+            <FieldLabel htmlFor={`models-${connection.id}`} className="sr-only">
+              {providerNames[connection.provider]} models
+            </FieldLabel>
+            <Combobox
+              items={models}
+              multiple
+              value={value}
+              onValueChange={onChange}
+              disabled={disabled}
+            >
+              {value.length > 0 && (
+                <ComboboxChips aria-label="Selected models">
+                  <ComboboxValue>
+                    {(selected: string[]) =>
+                      selected.map((model) => (
+                        <ComboboxChip
+                          key={model}
+                          aria-label={model}
+                          removeLabel={`Remove ${model}`}
+                          className="max-w-full"
+                        >
+                          <span className="truncate">{model}</span>
+                        </ComboboxChip>
+                      ))
+                    }
+                  </ComboboxValue>
+                </ComboboxChips>
+              )}
+              <ComboboxInput
+                id={`models-${connection.id}`}
+                placeholder={loading ? "Loading models…" : "Select models…"}
+                disabled={disabled || loading || !!error}
+              />
+              <ComboboxContent>
+                <ComboboxEmpty>No models found</ComboboxEmpty>
+                <ComboboxList>
+                  {(model: string) => (
+                    <ComboboxItem key={model} value={model}>
+                      {model}
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          </Field>
+        )}
+        {error && (
+          <div className="flex flex-col items-start gap-2">
+            <ErrorMessage>{error}</ErrorMessage>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={disabled}
+              onClick={() => setAttempt((v) => v + 1)}
+            >
+              Retry models
+            </Button>
+          </div>
+        )}
+      </FieldGroup>
+    </FieldSet>
   );
 }
 

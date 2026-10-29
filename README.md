@@ -33,6 +33,12 @@ Use **Connections → Add account** for additional subscription accounts. **URL 
 
 Start these accounts from scratch. There is no codex-lb migration or account import from the former companion backend. Existing services and their files are left untouched. The Go backend does not read the old SQLite database.
 
+## API key access
+
+Use the edit action under **API keys** to change a key's name, providers, accounts, models, request cap or expiration. The key value and usage history stay the same. Changes apply to subsequent requests and WebSocket turns.
+
+Model access uses the same provider catalog as native model discovery. Keep **All models** enabled for unrestricted model access, including future models. Disable it to select models from the searchable picker. Selected models appear above the picker and can be removed individually.
+
 ## Usage and request logs
 
 Usage graphs show token totals and estimated API-equivalent cost for Today, 7d, 30d, 90d, the past year or All time. Both graphs share the selected period and split uncached input, cache reads, cache writes, output and reasoning on hover. Dates use UTC, with hourly points for Today and monthly points for longer histories. The backend uses the SDK's non-overlapping token accounting. Daily aggregates persist independently of the 10,000 retained request records; recent hourly aggregates retain two days. Existing request metadata supplies hourly history on the first upgrade.

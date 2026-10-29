@@ -48,10 +48,47 @@ type Snapshot struct {
 	ResetCredits *ResetCredits `json:"resetCredits,omitempty"`
 }
 
+func (a *App) accountProviders() map[string]string {
+	providers := map[string]string{}
+	for _, auth := range a.core.List() {
+		providers[auth.ID] = auth.Provider
+	}
+	return providers
+}
+
+// Share the SDK's account model catalog with native discovery and the key editor.
+func (a *App) providerModels(ctx context.Context, provider string, accountIDs []string) ([]string, error) {
+	models := []string{}
+	if a.engine == nil {
+		return models, nil
+	}
+	for _, auth := range a.core.List() {
+		if auth.Provider != provider || (accountIDs != nil && !contains(accountIDs, auth.ID)) {
+			continue
+		}
+		w := a.managementCall(ctx, "GET", "/credentials/models?name="+url.QueryEscape(auth.ID), "")
+		var data struct {
+			Models []struct {
+				ID string `json:"id"`
+			} `json:"models"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &data) != nil {
+			return models, fmt.Errorf("provider model catalog unavailable")
+		}
+		for _, m := range data.Models {
+			if m.ID != "" && !contains(models, m.ID) {
+				models = append(models, m.ID)
+			}
+		}
+	}
+	sort.Strings(models)
+	return models, nil
+}
+
 func str(v any) string { s, _ := v.(string); return s }
 func (a *App) publicConnection(conn Connection) gin.H {
 	accounts := []Account{}
-	models := []string{}
+	models, _ := a.providerModels(context.Background(), conn.Provider, nil)
 	d := a.store.read()
 	var synced *time.Time
 	for _, auth := range a.core.List() {
@@ -99,22 +136,7 @@ func (a *App) publicConnection(conn Connection) gin.H {
 			snap.ResetCredits.Available = len(activeCredits(snap.ResetCredits.Items, now()))
 		}
 		accounts = append(accounts, Account{ID: auth.ID, Name: name, Email: email, Plan: plan, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits})
-		// This registry lookup is local to the SDK, never an upstream request.
-		if a.engine != nil {
-			w := a.managementCall(context.Background(), "GET", "/credentials/models?name="+url.QueryEscape(auth.ID), "")
-			var data struct {
-				Models []struct {
-					ID string `json:"id"`
-				} `json:"models"`
-			}
-			if w.Code == 200 && json.Unmarshal(w.Body.Bytes(), &data) == nil {
-				for _, m := range data.Models {
-					if !contains(models, m.ID) {
-						models = append(models, m.ID)
-					}
-				}
-			}
-		}
+
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
 	sort.Strings(models)
@@ -270,23 +292,15 @@ func (a *App) provider(c *gin.Context) {
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	c.Request.ContentLength = int64(len(body))
 	if c.Request.Method == "GET" {
+		ids, err := a.providerModels(ctx, provider, grant.AccountIDs)
+		if err != nil {
+			fail(c, 502, "Provider model catalog unavailable.")
+			return
+		}
 		models := []gin.H{}
-		seen := map[string]bool{}
-		for _, auth := range a.core.List() {
-			if auth.Provider != provider || (grant.AccountIDs != nil && !contains(grant.AccountIDs, auth.ID)) {
-				continue
-			}
-			w := a.managementCall(ctx, "GET", "/credentials/models?name="+url.QueryEscape(auth.ID), "")
-			var data struct {
-				Models []gin.H `json:"models"`
-			}
-			_ = json.Unmarshal(w.Body.Bytes(), &data)
-			for _, m := range data.Models {
-				id := str(m["id"])
-				if id != "" && !seen[id] && (grant.Models == nil || contains(grant.Models, id)) {
-					seen[id] = true
-					models = append(models, gin.H{"id": id, "object": "model"})
-				}
+		for _, id := range ids {
+			if grant.Models == nil || contains(grant.Models, id) {
+				models = append(models, gin.H{"id": id, "object": "model"})
 			}
 		}
 		if provider == "claude" {
@@ -338,10 +352,7 @@ func (a *App) authorizeProvider(provider, id, value, model string, reserve bool,
 	if keyID == "" {
 		return conn, grant, keyID, 401, "Supply a valid client key."
 	}
-	authProviders := map[string]string{}
-	for _, auth := range a.core.List() {
-		authProviders[auth.ID] = auth.Provider
-	}
+	authProviders := a.accountProviders()
 	err := a.store.change(func(d *diskState) error {
 		k, ok := d.Keys[keyID]
 		if !ok || !k.Enabled || (k.ExpiresAt != nil && !k.ExpiresAt.After(now())) {
