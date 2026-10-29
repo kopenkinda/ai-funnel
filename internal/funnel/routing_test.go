@@ -85,7 +85,7 @@ func TestQuotaWindowsFollowModelPlanAndReset(t *testing.T) {
 		t.Fatalf("Claude model weekly limit ignored: %+v", q)
 	}
 	weekly := Snapshot{Quotas: []Quota{window("7d", 25, 2*24*time.Hour)}}
-	if q := quotaFor("codex", "gpt-5.4", weekly, &core.Auth{Metadata: map[string]any{"plan_type": "pro"}}, routingNow); q.primary != nil || q.secondaryUsed() != 75 || q.remaining() != 2.5 {
+	if q := quotaFor("codex", "gpt-5.4", weekly, &core.Auth{Metadata: map[string]any{"plan_type": "pro"}}, routingNow); q.primary != nil || q.primaryUsed() != 75 || q.secondaryUsed() != 75 || q.remaining() != 2.5 {
 		t.Fatalf("weekly-only plan: %+v", q)
 	}
 	if q := quotaFor("codex", "gpt-5.4", Snapshot{}, &core.Auth{}, routingNow); q.exhausted || q.remaining() != 1 {
@@ -181,6 +181,64 @@ func TestRoutingEligibility(t *testing.T) {
 	}
 	if got, _ := f.pick(t, sc, "gpt-5.4", nil, auths); got != "a" {
 		t.Fatalf("model-specific exhaustion blocked other models: %q", got)
+	}
+}
+
+func TestEarlierPrimaryResetWithinSameHour(t *testing.T) {
+	f := newRoutingFixture(routeWith("capacity_weighted", func(r *Routing) { r.ResetWindow = "primary" }), map[string]Snapshot{
+		"a": usage("plus", 0, 0, 10*time.Minute, 24*time.Hour),
+		"b": usage("pro", 0, 0, 40*time.Minute, 24*time.Hour),
+	})
+	f.draw = 0.99
+	if got, err := f.pick(t, scope{provider: "codex"}, "gpt-5.4", nil, routingAccounts("codex", "a", "b")); err != nil || got != "a" {
+		t.Fatalf("did not prefer the earlier 5h reset: %q %v", got, err)
+	}
+}
+
+func TestStickySessionsAreIsolatedByKey(t *testing.T) {
+	for _, explicit := range []bool{true, false} {
+		name := "conversation history"
+		if explicit {
+			name = "explicit session"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newRoutingFixture(routeWith("capacity_weighted", func(r *Routing) { r.StickySessions = true }), nil)
+			auths := routingAccounts("codex", "a", "b")
+			pick := func(key string, draw float64, grown bool) (*core.Auth, executor.Options) {
+				t.Helper()
+				f.draw = draw
+				opts := executor.Options{SourceFormat: "openai", Metadata: map[string]any{executor.CallerScopeMetadataKey: token()}}
+				if explicit {
+					opts.Headers = http.Header{"X-Session-Id": {"same-client-session"}}
+				} else if grown {
+					opts.OriginalRequest = []byte(`{"messages":[{"role":"system","content":"stable"},{"role":"user","content":"first"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`)
+				} else {
+					opts.OriginalRequest = []byte(`{"messages":[{"role":"system","content":"stable"},{"role":"user","content":"first"}]}`)
+				}
+				ctx := context.WithValue(context.Background(), scopeKey{}, scope{provider: "codex", keyID: key})
+				a, err := f.sel.Pick(ctx, "codex", "gpt-5.4", opts, auths)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return a, opts
+			}
+			first, firstOpts := pick("first-key", 0.99, false)
+			second, secondOpts := pick("second-key", 0, false)
+			if first.ID != "b" || second.ID != "a" {
+				t.Fatalf("keys shared a binding: %s %s", first.ID, second.ID)
+			}
+			for _, result := range []core.Result{
+				{AuthID: first.ID, Provider: "codex", Model: "gpt-5.4", Success: true, Options: firstOpts},
+				{AuthID: second.ID, Provider: "codex", Model: "gpt-5.4", Success: true, Options: secondOpts},
+			} {
+				f.sel.OnResult(result)
+			}
+			followFirst, _ := pick("first-key", 0, true)
+			followSecond, _ := pick("second-key", 0.99, true)
+			if followFirst.ID != "b" || followSecond.ID != "a" {
+				t.Fatalf("result tracking or request identity moved bindings: %s %s", followFirst.ID, followSecond.ID)
+			}
+		})
 	}
 }
 

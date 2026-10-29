@@ -167,6 +167,9 @@ func quotaFor(provider, model string, snap Snapshot, auth *core.Auth, at time.Ti
 }
 func (q accountQuota) primaryUsed() float64 {
 	if q.primary == nil {
+		if q.secondary != nil {
+			return q.secondary.used
+		}
 		return 0
 	}
 	return q.primary.used
@@ -197,11 +200,11 @@ func (q accountQuota) reset(window string) *time.Time {
 
 const unknownReset = 365 * 24 * time.Hour
 
-// Secondary resets compare by whole day and primary resets by whole hour.
+// Secondary resets compare by whole day; primary resets use exact seconds.
 func (q accountQuota) resetBucket(window string, at time.Time) int64 {
 	unit := 24 * time.Hour
 	if window == "primary" {
-		unit = time.Hour
+		unit = time.Second
 	}
 	until := unknownReset
 	if t := q.reset(window); t != nil {
@@ -402,24 +405,29 @@ func (s *selector) route(ctx context.Context, provider, model string, opts execu
 	if !route.StickySessions || route.Strategy == "single_account" {
 		return strategy{s}.Pick(ctx, provider, model, opts, ready)
 	}
-	return s.affinity(provider).Pick(ctx, provider, model, opts, ready)
+	key, _ := opts.Metadata[executor.CallerScopeMetadataKey].(string)
+	return s.affinity(key).Pick(ctx, provider, model, opts, ready)
 }
-func (s *selector) affinity(provider string) *core.SessionAffinitySelector {
+func (s *selector) affinity(key string) *core.SessionAffinitySelector {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sticky == nil {
 		s.sticky = map[string]*core.SessionAffinitySelector{}
 	}
-	if s.sticky[provider] == nil {
-		s.sticky[provider] = core.NewSessionAffinitySelector(strategy{s})
+	if s.sticky[key] == nil {
+		s.sticky[key] = core.NewSessionAffinitySelector(strategy{s})
 	}
-	return s.sticky[provider]
+	return s.sticky[key]
 }
 
 // The manager reports results and removals to its selector; forward them so
 // failed or removed accounts lose their session bindings.
 func (s *selector) OnResult(result core.Result) {
-	for _, a := range s.stickySelectors() {
+	key, _ := result.Options.Metadata[executor.CallerScopeMetadataKey].(string)
+	s.mu.Lock()
+	a := s.sticky[key]
+	s.mu.Unlock()
+	if a != nil {
 		a.OnResult(result)
 	}
 }

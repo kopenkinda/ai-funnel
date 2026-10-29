@@ -31,6 +31,7 @@ type privateRequest struct{}
 type scopeKey struct{}
 type scope struct {
 	provider         string
+	keyID            string
 	ids              []string
 	subscriptionOnly bool
 	selected         *atomic.Pointer[core.Auth]
@@ -64,6 +65,9 @@ func (s *selector) Pick(ctx context.Context, provider, model string, opts execut
 	if !ok || (provider != "mixed" && provider != allowed.provider) {
 		return nil, fmt.Errorf("provider access denied")
 	}
+	opts.EnsureMetadata()
+	// Session identity must stay stable without changing per-request telemetry.
+	opts.Metadata[executor.CallerScopeMetadataKey] = allowed.provider + "|" + allowed.keyID
 	candidates := make([]*core.Auth, 0, len(auths))
 	for _, a := range auths {
 		if a.Provider == allowed.provider && (allowed.ids == nil || contains(allowed.ids, a.ID)) {
@@ -91,7 +95,11 @@ func (s *selector) Pick(ctx context.Context, provider, model string, opts execut
 		}
 	}
 	if !allowed.subscriptionOnly {
-		return s.route(ctx, allowed.provider, model, opts, candidates, route, snaps)
+		selected, err := s.route(ctx, allowed.provider, model, opts, candidates, route, snaps)
+		if err == nil && allowed.selected != nil {
+			allowed.selected.Store(selected.Clone())
+		}
+		return selected, err
 	}
 	for len(candidates) > 0 {
 		selected, err := s.route(ctx, allowed.provider, model, opts, candidates, route, snaps)

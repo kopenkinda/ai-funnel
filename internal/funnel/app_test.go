@@ -426,6 +426,51 @@ func TestEmbeddedService(t *testing.T) {
 			t.Fatalf("restore default: %d %s", status, b)
 		}
 	})
+	t.Run("open WebSockets honor single-account routing changes", func(t *testing.T) {
+		defer func() {
+			_ = store.change(func(d *diskState) error { d.Settings.Routing["codex"] = defaultRouting(); return nil })
+			capture.mu.Lock()
+			capture.ids = nil
+			capture.mu.Unlock()
+		}()
+		capture.mu.Lock()
+		capture.ids = nil
+		capture.mu.Unlock()
+		ws, _, err := websocket.DefaultDialer.Dial(strings.Replace(root, "http://", "ws://", 1)+"/providers/codex/codex/backend-api/codex/responses", http.Header{"Authorization": {"Bearer " + key}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ws.Close()
+		turn := func(want string) {
+			t.Helper()
+			if err := ws.WriteJSON(map[string]any{"type": "response.create", "model": model, "input": []any{}}); err != nil {
+				t.Fatal(err)
+			}
+			_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+			for {
+				_, b, err := ws.ReadMessage()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(b), want) {
+					return
+				}
+			}
+		}
+		turn("response.completed")
+		route := defaultRouting()
+		route.Strategy, route.AccountID = "single_account", "account-a"
+		body, _ := json.Marshal(route)
+		if status, b := request("PUT", "/api/routing/codex", admin, string(body)); status != 200 {
+			t.Fatalf("routing change: %d %s", status, b)
+		}
+		turn("Account routing changed")
+		capture.mu.Lock()
+		defer capture.mu.Unlock()
+		if !reflect.DeepEqual(capture.ids, []string{"account-b@example.com.json"}) {
+			t.Fatalf("pinned socket bypassed routing change: %v", capture.ids)
+		}
+	})
 	t.Run("subscription-only keys use funded accounts until subscription exhaustion on HTTP and WebSocket turns", func(t *testing.T) {
 		const available = `{"credits":{"has_credits":true,"balance":"123"},"rate_limit":{"primary_window":{"used_percent":99},"secondary_window":{"used_percent":50}}}`
 		const exhausted = `{"credits":{"has_credits":true,"balance":"123"},"rate_limit":{"allowed":true,"primary_window":{"used_percent":100},"secondary_window":{"used_percent":50}}}`
