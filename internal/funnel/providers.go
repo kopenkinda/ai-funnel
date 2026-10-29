@@ -129,11 +129,29 @@ func (a *App) publicConnection(conn Connection) gin.H {
 				if ok {
 					credit.Attempt = &attempt
 					if terminalReset(attempt.Result) {
-						credit.Status = attempt.Result
+						if credit.ResetType == "claude_rate_limits" && attempt.Result != "no_credit" {
+							n := min(credit.count(), max(0, attempt.Remaining-1))
+							credit.Remaining = &n
+							if n == 0 {
+								credit.Status = attempt.Result
+							}
+						} else if resetAttemptBlocks(*credit, attempt) {
+							credit.Status = attempt.Result
+						}
 					}
 				}
 			}
-			snap.ResetCredits.Available = len(activeCredits(snap.ResetCredits.Items, now()))
+			snap.ResetCredits.Available = 0
+			if conn.Provider == "claude" && snap.ResetCredits.Applicable != nil {
+				n := 0
+				snap.ResetCredits.Applicable = &n
+			}
+			for _, credit := range activeCredits(snap.ResetCredits.Items, now()) {
+				snap.ResetCredits.Available += credit.count()
+				if conn.Provider == "claude" && credit.UsableNow && snap.ResetCredits.Applicable != nil {
+					*snap.ResetCredits.Applicable += credit.count()
+				}
+			}
 		}
 		accounts = append(accounts, Account{ID: auth.ID, Name: name, Email: email, Plan: plan, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits})
 
@@ -171,7 +189,7 @@ func (a *App) refresh(ctx context.Context, conn Connection) {
 		snap := Snapshot{At: now(), Quotas: []Quota{}}
 		target := "https://chatgpt.com/backend-api/wham/usage"
 		if conn.Provider == "claude" {
-			target = "https://api.anthropic.com/api/oauth/usage"
+			target = claudeUsageURL
 		}
 		requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		r, _ := http.NewRequestWithContext(requestCtx, "GET", target, nil)
@@ -189,6 +207,13 @@ func (a *App) refresh(ctx context.Context, conn Connection) {
 			response.Body.Close()
 			if e == nil {
 				snap.Quotas, snap.ResetCredits = parseUsage(conn.Provider, data, snap.At)
+				if conn.Provider == "claude" {
+					var resetErr error
+					snap.ResetCredits, resetErr = parseClaudeCredits(data, snap.At)
+					if resetErr != nil {
+						snap.ResetCredits = claudeCreditsUnavailable(a.store.read().Snapshots[auth.ID].ResetCredits)
+					}
+				}
 			}
 		}
 		cancel()

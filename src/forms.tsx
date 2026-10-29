@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
   ArrowUpRight01Icon,
@@ -6,7 +6,6 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import {
-  providers,
   providerNames,
   type Grant,
   type Provider,
@@ -15,8 +14,10 @@ import {
 } from "./types.ts";
 import { api } from "./api.ts";
 import { CopyButton, Dialog, ErrorMessage, ProviderIcon } from "./ui.tsx";
-import { PrivateText } from "./privacy.tsx";
+import { PrivateText, usePrivacy } from "./privacy.tsx";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import {
   Field,
@@ -47,15 +48,14 @@ import {
 export function ConnectionForm({
   onClose,
   onSaved,
-  reconnect,
+  provider,
+  connection,
 }: {
   onClose: () => void;
   onSaved: () => Promise<void>;
-  reconnect?: PublicConnection;
+  provider: Provider;
+  connection?: PublicConnection;
 }) {
-  const [provider, setProvider] = useState<Provider>(
-    reconnect?.provider || "codex",
-  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [method, setMethod] = useState<"oauth" | "token" | "file">("oauth");
@@ -126,7 +126,6 @@ export function ConnectionForm({
           "POST",
           {
             provider,
-            name: values.name,
             ...(method === "file"
               ? { auth }
               : { token: values.token, accountId: values.accountId }),
@@ -137,11 +136,11 @@ export function ConnectionForm({
         onClose();
         return;
       }
-      const connection =
-        reconnect ||
+      const pool =
+        connection ||
         (await api<PublicConnection>("/connections", "POST", {
-          ...values,
           provider,
+          name: providerNames[provider],
         }));
       const result = await api<{
         url?: string;
@@ -151,7 +150,7 @@ export function ConnectionForm({
       const url = result.authorization_url || result.url;
       if (!url || !result.state)
         throw new Error("Sign-in did not return an authorization URL.");
-      setLogin({ url, state: result.state, connectionId: connection.id });
+      setLogin({ url, state: result.state, connectionId: pool.id });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -163,14 +162,12 @@ export function ConnectionForm({
       title={
         login
           ? `Sign in to ${providerNames[provider]}`
-          : reconnect
-            ? "Add account"
-            : "Add provider"
+          : `Add ${providerNames[provider]} account`
       }
       description={
         login
           ? "Complete sign-in in your browser, then return here."
-          : "Accounts are managed directly by this app."
+          : undefined
       }
       onClose={onClose}
     >
@@ -223,49 +220,6 @@ export function ConnectionForm({
       ) : (
         <form onSubmit={submit} className="flex flex-col gap-6">
           <FieldGroup>
-            {!reconnect && (
-              <>
-                <Field>
-                  <FieldLabel>Provider</FieldLabel>
-                  <ToggleGroup
-                    aria-label="Provider"
-                    value={[provider]}
-                    onValueChange={(v) => {
-                      if (v[0]) {
-                        setProvider(v[0] as Provider);
-                        setAuthFile(null);
-                        setError("");
-                      }
-                    }}
-                    variant="outline"
-                    spacing={0}
-                    className="w-full"
-                  >
-                    {providers.map((p) => (
-                      <ToggleGroupItem
-                        key={p}
-                        value={p}
-                        className="flex-1"
-                        disabled={busy}
-                      >
-                        {providerNames[p]}
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="connection-name">Name</FieldLabel>
-                  <Input
-                    key={provider}
-                    id="connection-name"
-                    name="name"
-                    required
-                    maxLength={80}
-                    defaultValue={providerNames[provider]}
-                  />
-                </Field>
-              </>
-            )}
             <Field>
               <FieldLabel>Account source</FieldLabel>
               <ToggleGroup
@@ -377,14 +331,25 @@ export function ConnectionForm({
 export function KeyForm({
   connections,
   clientKey,
+  inline = false,
   onClose,
   onSaved,
 }: {
   connections: PublicConnection[];
   clientKey?: PublicKey;
+  inline?: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  const formId = useId();
+  const privacy = usePrivacy((state) => state.enabled);
+  const [name, setName] = useState(clientKey?.name ?? "");
+  const [dailyLimit, setDailyLimit] = useState(
+    String(clientKey?.dailyLimit ?? ""),
+  );
+  const [expiresAt, setExpiresAt] = useState(
+    clientKey?.expiresAt?.slice(0, 10) ?? "",
+  );
   const [mode, setMode] = useState<"create" | "import">("create");
   const [grants, setGrants] = useState<Grant[]>(() =>
     structuredClone(clientKey?.grants ?? []),
@@ -422,7 +387,7 @@ export function KeyForm({
       if (clientKey) {
         await api(`/keys/${clientKey.id}`, "PATCH", settings);
         await onSaved();
-        onClose();
+        if (!inline) onClose();
         return;
       }
       const result = await api<{ token: string | null; key: PublicKey }>(
@@ -487,241 +452,285 @@ export function KeyForm({
         </DialogFooter>
       </Dialog>
     );
-  return (
+  const dirty =
+    !clientKey ||
+    name !== clientKey.name ||
+    dailyLimit !== String(clientKey.dailyLimit ?? "") ||
+    expiresAt !== (clientKey.expiresAt?.slice(0, 10) ?? "") ||
+    JSON.stringify(grants) !== JSON.stringify(clientKey.grants);
+  const Footer = inline ? "div" : DialogFooter;
+  const rowLayout = inline
+    ? "@md/field-group:grid @md/field-group:grid-cols-[minmax(0,1fr)_20rem] @md/field-group:items-center"
+    : undefined;
+  const form = (
+    <form
+      onSubmit={submit}
+      aria-label={clientKey ? "API key settings" : undefined}
+      className={cn("flex min-w-0 flex-col gap-6", inline && "flex-1")}
+    >
+      <FieldGroup className={cn(inline && "gap-6")}>
+        {!clientKey && (
+          <Field>
+            <FieldLabel>Key source</FieldLabel>
+            <ToggleGroup
+              value={[mode]}
+              onValueChange={(v) => {
+                if (!v[0]) return;
+                setMode(v[0] as "create" | "import");
+              }}
+              variant="outline"
+              spacing={0}
+              className="w-full"
+              aria-label="Key source"
+            >
+              <ToggleGroupItem value="create" className="flex-1">
+                Create key
+              </ToggleGroupItem>
+              <ToggleGroupItem value="import" className="flex-1">
+                Use existing key
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </Field>
+        )}
+        <Field className={rowLayout}>
+          <FieldLabel htmlFor={`${formId}-key-name`}>Key name</FieldLabel>
+          <Input
+            id={`${formId}-key-name`}
+            name="name"
+            required
+            maxLength={80}
+            placeholder="Personal devices"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={busy}
+            className={cn(
+              inline && privacy && name.includes("@") && "not-focus:blur-sm",
+            )}
+          />
+        </Field>
+        {!clientKey && mode === "import" && (
+          <Field>
+            <FieldLabel htmlFor={`${formId}-existing-key`}>
+              Existing API key
+            </FieldLabel>
+            <Input
+              id={`${formId}-existing-key`}
+              name="existingKey"
+              type="password"
+              required
+              autoComplete="off"
+              placeholder="Your existing device key"
+            />
+            <FieldDescription>
+              Choose the providers and accounts this key can use.
+            </FieldDescription>
+          </Field>
+        )}
+        <FieldGroup className={cn(inline ? "gap-6" : "sm:flex-row")}>
+          <Field className={rowLayout}>
+            <FieldLabel htmlFor={`${formId}-daily-limit`}>
+              Requests per day
+            </FieldLabel>
+            <Input
+              id={`${formId}-daily-limit`}
+              name="dailyLimit"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="No limit"
+              value={dailyLimit}
+              onChange={(e) => setDailyLimit(e.target.value)}
+              disabled={busy}
+            />
+          </Field>
+          <Field className={rowLayout}>
+            <FieldLabel htmlFor={`${formId}-key-expiry`}>Expires on</FieldLabel>
+            <Input
+              id={`${formId}-key-expiry`}
+              name="expiresAt"
+              type="date"
+              min={
+                clientKey
+                  ? undefined
+                  : new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+              }
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+              disabled={busy}
+            />
+          </Field>
+        </FieldGroup>
+        {inline && <Separator />}
+        <FieldSet>
+          <FieldLegend variant="label">Provider access</FieldLegend>
+          <FieldGroup>
+            {connections.length ? (
+              connections.map((c) => {
+                const grant = grants.find((g) => g.connectionId === c.id);
+                return (
+                  <FieldSet
+                    key={c.id}
+                    className={cn(
+                      "gap-3",
+                      inline
+                        ? "border-b pb-5 last:border-0 last:pb-0"
+                        : "rounded-2xl border p-4",
+                    )}
+                  >
+                    <Field orientation="horizontal">
+                      <Checkbox
+                        id={`${formId}-grant-${c.id}`}
+                        checked={!!grant}
+                        disabled={busy}
+                        onCheckedChange={(checked) =>
+                          setGrants((prev) =>
+                            checked
+                              ? [
+                                  ...prev,
+                                  {
+                                    connectionId: c.id,
+                                    accountIds: null,
+                                    models: null,
+                                  },
+                                ]
+                              : prev.filter((g) => g.connectionId !== c.id),
+                          )
+                        }
+                      />
+                      <FieldContent>
+                        <FieldLabel htmlFor={`${formId}-grant-${c.id}`}>
+                          <PrivateText>{c.name}</PrivateText>
+                        </FieldLabel>
+                        {c.name !== providerNames[c.provider] && (
+                          <FieldDescription>
+                            {providerNames[c.provider]}
+                          </FieldDescription>
+                        )}
+                      </FieldContent>
+                      <ProviderIcon provider={c.provider} small />
+                    </Field>
+                    {grant && (
+                      <FieldGroup className={cn("gap-4", inline && "pl-7")}>
+                        <FieldSet>
+                          <FieldLegend variant="label" className="sr-only">
+                            Accounts for <PrivateText>{c.name}</PrivateText>
+                          </FieldLegend>
+                          <FieldGroup data-slot="checkbox-group">
+                            <Field orientation="horizontal">
+                              <Checkbox
+                                id={`${formId}-pool-${c.id}`}
+                                checked={grant.accountIds === null}
+                                disabled={busy}
+                                onCheckedChange={(checked) =>
+                                  update(c.id, {
+                                    accountIds: checked ? null : [],
+                                  })
+                                }
+                              />
+                              <FieldLabel htmlFor={`${formId}-pool-${c.id}`}>
+                                Allow the whole account pool
+                              </FieldLabel>
+                            </Field>
+                            {grant.accountIds !== null &&
+                              c.accounts.map((a) => (
+                                <Field key={a.id} orientation="horizontal">
+                                  <Checkbox
+                                    id={`${formId}-account-${c.id}-${a.id}`}
+                                    checked={grant.accountIds!.includes(a.id)}
+                                    disabled={busy}
+
+                                    onCheckedChange={(checked) =>
+                                      update(c.id, {
+                                        accountIds: checked
+                                          ? [...grant.accountIds!, a.id]
+                                          : grant.accountIds!.filter(
+                                              (id) => id !== a.id,
+                                            ),
+                                      })
+                                    }
+                                  />
+                                  <FieldContent>
+                                    <FieldLabel
+                                      htmlFor={`${formId}-account-${c.id}-${a.id}`}
+                                    >
+                                      <PrivateText>{a.name}</PrivateText>
+                                    </FieldLabel>
+                                  </FieldContent>
+                                </Field>
+                              ))}
+                          </FieldGroup>
+                        </FieldSet>
+                        <ModelAccess
+                          connection={c}
+                          value={grant.models}
+                          disabled={busy}
+                          onChange={(models) => update(c.id, { models })}
+                        />
+                      </FieldGroup>
+                    )}
+                  </FieldSet>
+                );
+              })
+            ) : (
+              <FieldDescription>
+                Connect a provider before creating a key.
+              </FieldDescription>
+            )}
+          </FieldGroup>
+        </FieldSet>
+        {error && <ErrorMessage>{error}</ErrorMessage>}
+      </FieldGroup>
+      <Footer
+        className={cn(
+          inline &&
+            "sticky bottom-0 mt-auto flex justify-end gap-2 border-t bg-background py-4",
+        )}
+      >
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy || (inline && !dirty)}
+          onClick={onClose}
+        >
+          {inline ? "Reset" : "Cancel"}
+        </Button>
+        <Button
+          type="submit"
+          disabled={
+            busy ||
+            (inline && !dirty) ||
+            !grants.length ||
+            grants.some(
+              (g) => g.models?.length === 0 || g.accountIds?.length === 0,
+            )
+          }
+        >
+          {busy ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <Icon icon={Key01Icon} data-icon="inline-start" />
+          )}
+          {busy
+            ? "Saving…"
+            : clientKey
+              ? "Save changes"
+              : mode === "import"
+                ? "Register existing key"
+                : "Create key"}
+        </Button>
+      </Footer>
+    </form>
+  );
+  return inline ? (
+    form
+  ) : (
     <Dialog
       title={clientKey ? "Edit API key" : "Add a shared key"}
       onClose={() => {
         if (!busy) onClose();
       }}
     >
-      <form onSubmit={submit} className="flex flex-col gap-6">
-        <FieldGroup>
-          {!clientKey && (
-            <Field>
-              <FieldLabel>Key source</FieldLabel>
-              <ToggleGroup
-                value={[mode]}
-                onValueChange={(v) => {
-                  if (!v[0]) return;
-                  setMode(v[0] as "create" | "import");
-                }}
-                variant="outline"
-                spacing={0}
-                className="w-full"
-                aria-label="Key source"
-              >
-                <ToggleGroupItem value="create" className="flex-1">
-                  Create key
-                </ToggleGroupItem>
-                <ToggleGroupItem value="import" className="flex-1">
-                  Use existing key
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </Field>
-          )}
-          <Field>
-            <FieldLabel htmlFor="key-name">Key name</FieldLabel>
-            <Input
-              id="key-name"
-              name="name"
-              required
-              maxLength={80}
-              placeholder="Personal devices"
-              defaultValue={clientKey?.name}
-            />
-          </Field>
-          {!clientKey && mode === "import" && (
-            <Field>
-              <FieldLabel htmlFor="existing-key">Existing API key</FieldLabel>
-              <Input
-                id="existing-key"
-                name="existingKey"
-                type="password"
-                required
-                autoComplete="off"
-                placeholder="Your existing device key"
-              />
-              <FieldDescription>
-                Choose the providers and accounts this key can use.
-              </FieldDescription>
-            </Field>
-          )}
-          <FieldSet>
-            <FieldLegend variant="label">Provider access</FieldLegend>
-            <FieldGroup>
-              {connections.length ? (
-                connections.map((c) => {
-                  const grant = grants.find((g) => g.connectionId === c.id);
-                  return (
-                    <FieldSet
-                      key={c.id}
-                      className="gap-3 rounded-2xl border p-4"
-                    >
-                      <Field orientation="horizontal">
-                        <Checkbox
-                          id={`grant-${c.id}`}
-                          checked={!!grant}
-                          disabled={busy}
-                          onCheckedChange={(checked) =>
-                            setGrants((prev) =>
-                              checked
-                                ? [
-                                    ...prev,
-                                    {
-                                      connectionId: c.id,
-                                      accountIds: null,
-                                      models: null,
-                                    },
-                                  ]
-                                : prev.filter((g) => g.connectionId !== c.id),
-                            )
-                          }
-                        />
-                        <FieldContent>
-                          <FieldLabel htmlFor={`grant-${c.id}`}>
-                            <PrivateText>{c.name}</PrivateText>
-                          </FieldLabel>
-                          {c.name !== providerNames[c.provider] && (
-                            <FieldDescription>
-                              {providerNames[c.provider]}
-                            </FieldDescription>
-                          )}
-                        </FieldContent>
-                        <ProviderIcon provider={c.provider} small />
-                      </Field>
-                      {grant && (
-                        <FieldGroup className="gap-4">
-                          <FieldSet>
-                            <FieldLegend variant="label" className="sr-only">
-                              Accounts for <PrivateText>{c.name}</PrivateText>
-                            </FieldLegend>
-                            <FieldGroup data-slot="checkbox-group">
-                              <Field orientation="horizontal">
-                                <Checkbox
-                                  id={`pool-${c.id}`}
-                                  checked={grant.accountIds === null}
-                                  disabled={busy}
-                                  onCheckedChange={(checked) =>
-                                    update(c.id, {
-                                      accountIds: checked ? null : [],
-                                    })
-                                  }
-                                />
-                                <FieldLabel htmlFor={`pool-${c.id}`}>
-                                  Allow the whole account pool
-                                </FieldLabel>
-                              </Field>
-                              {grant.accountIds !== null &&
-                                c.accounts.map((a) => (
-                                  <Field key={a.id} orientation="horizontal">
-                                    <Checkbox
-                                      id={`account-${c.id}-${a.id}`}
-                                      checked={grant.accountIds!.includes(a.id)}
-                                      disabled={busy}
-
-                                      onCheckedChange={(checked) =>
-                                        update(c.id, {
-                                          accountIds: checked
-                                            ? [...grant.accountIds!, a.id]
-                                            : grant.accountIds!.filter(
-                                                (id) => id !== a.id,
-                                              ),
-                                        })
-                                      }
-                                    />
-                                    <FieldContent>
-                                      <FieldLabel
-                                        htmlFor={`account-${c.id}-${a.id}`}
-                                      >
-                                        <PrivateText>{a.name}</PrivateText>
-                                      </FieldLabel>
-                                    </FieldContent>
-                                  </Field>
-                                ))}
-                            </FieldGroup>
-                          </FieldSet>
-                          <ModelAccess
-                            connection={c}
-                            value={grant.models}
-                            disabled={busy}
-                            onChange={(models) => update(c.id, { models })}
-                          />
-                        </FieldGroup>
-                      )}
-                    </FieldSet>
-                  );
-                })
-              ) : (
-                <FieldDescription>
-                  Connect a provider before creating a key.
-                </FieldDescription>
-              )}
-            </FieldGroup>
-          </FieldSet>
-          <FieldGroup className="sm:flex-row">
-            <Field>
-              <FieldLabel htmlFor="daily-limit">Requests per day</FieldLabel>
-              <Input
-                id="daily-limit"
-                name="dailyLimit"
-                type="number"
-                min="1"
-                step="1"
-                placeholder="No limit"
-                defaultValue={clientKey?.dailyLimit ?? ""}
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="key-expiry">Expires on</FieldLabel>
-              <Input
-                id="key-expiry"
-                name="expiresAt"
-                type="date"
-                min={
-                  clientKey
-                    ? undefined
-                    : new Date(Date.now() + 86400000).toISOString().slice(0, 10)
-                }
-                defaultValue={clientKey?.expiresAt?.slice(0, 10) ?? ""}
-              />
-            </Field>
-          </FieldGroup>
-          {error && <ErrorMessage>{error}</ErrorMessage>}
-        </FieldGroup>
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            disabled={
-              busy ||
-              !grants.length ||
-              grants.some(
-                (g) => g.models?.length === 0 || g.accountIds?.length === 0,
-              )
-            }
-          >
-            {busy ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <Icon icon={Key01Icon} data-icon="inline-start" />
-            )}
-            {busy
-              ? "Saving…"
-              : clientKey
-                ? "Save changes"
-                : mode === "import"
-                  ? "Register existing key"
-                  : "Create key"}
-          </Button>
-        </DialogFooter>
-      </form>
+      {form}
     </Dialog>
   );
 }
@@ -737,6 +746,7 @@ function ModelAccess({
   disabled: boolean;
   onChange: (models: string[] | null) => void;
 }) {
+  const formId = useId();
   const [models, setModels] = useState(connection.models);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -765,18 +775,21 @@ function ModelAccess({
       <FieldGroup className="gap-3">
         <Field orientation="horizontal">
           <Checkbox
-            id={`all-models-${connection.id}`}
+            id={`${formId}-all-models-${connection.id}`}
             checked={value === null}
             disabled={disabled}
             onCheckedChange={(checked) => onChange(checked ? null : [])}
           />
-          <FieldLabel htmlFor={`all-models-${connection.id}`}>
+          <FieldLabel htmlFor={`${formId}-all-models-${connection.id}`}>
             All models
           </FieldLabel>
         </Field>
         {value !== null && (
           <Field>
-            <FieldLabel htmlFor={`models-${connection.id}`} className="sr-only">
+            <FieldLabel
+              htmlFor={`${formId}-models-${connection.id}`}
+              className="sr-only"
+            >
               {providerNames[connection.provider]} models
             </FieldLabel>
             <Combobox
@@ -805,7 +818,7 @@ function ModelAccess({
                 </ComboboxChips>
               )}
               <ComboboxInput
-                id={`models-${connection.id}`}
+                id={`${formId}-models-${connection.id}`}
                 placeholder={loading ? "Loading models…" : "Select models…"}
                 disabled={disabled || loading || !!error}
               />

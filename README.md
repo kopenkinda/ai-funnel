@@ -47,7 +47,7 @@ Prices are versioned with each request, using the [OpenAI](https://developers.op
 
 Activity supports search, provider/account/key/model/status/transport filters, pagination and request details. Records include account, model, client and upstream transport, latency, TTFT, output speed, tokens and cost. Prompts, response text, raw upstream errors and bearer credentials are not persisted.
 
-**Settings → Use expiring banked resets** enables Codex redemption during a credit's final five minutes. It defaults off and persists on the server. The scheduler checks every 15 seconds while the service runs, refreshes credit status before redemption, and retries temporary failures or `nothing_to_reset` every 30 seconds until expiry. Redemption uses T3 Code's deterministic request ID, including after restarts. Successful credits are not redeemed twice. Expiry details are available from the banked-reset badge.
+**Settings → Use expiring banked resets** enables Codex and Claude redemption during a credit's final five minutes. It defaults off and persists on the server. The scheduler checks every 15 seconds while the service runs, refreshes credit status before redemption, and retries temporary failures or `nothing_to_reset` every 30 seconds until expiry. Claude grants must be usable; grants without an expiry are displayed but never automatically redeemed. Codex uses T3 Code's deterministic request ID. Claude persists one request ID per redemption, reuses it for unconfirmed requests after restarts, and waits for a confirmed count decrease before using another reset from the same grant. Successful redemptions clear the account's local cooldown. Counts and expiry details are available from the banked-reset badge.
 
 ## T3 Code usage hub
 
@@ -102,4 +102,4 @@ pnpm test:ui
 
 Backend tests run the embedded SDK with controlled executors and isolated state. They check authentication, account selection, native Responses and Messages, streaming, quotas, concurrent limits, and encrypted persistence. They do not prove live provider login or token refresh. Those require signing in to real accounts. See [docs/verification.md](docs/verification.md).
 
-The UI retains shadcn preset `b13HF9dX9O`. Provider SVGs come from [SVGL](https://github.com/pheralb/svgl/tree/main/static/library); its license is included beside the assets. CLIProxyAPI's license is in [LICENSES/CLIProxyAPI.txt](LICENSES/CLIProxyAPI.txt).
+The UI retains shadcn preset `b13HF9dX9O`. Provider SVG sources and licenses are listed in [public/providers/SOURCES.md](public/providers/SOURCES.md). CLIProxyAPI's license is in [LICENSES/CLIProxyAPI.txt](LICENSES/CLIProxyAPI.txt).

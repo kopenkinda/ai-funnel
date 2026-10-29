@@ -130,11 +130,15 @@ function BankedResets({ accounts }: { accounts: Account[] }) {
                 .resetCredits!.items?.filter(
                   (c) =>
                     c.status === "available" &&
-                    new Date(c.expires_at).getTime() > Date.now(),
+                    (!c.expires_at ||
+                      new Date(c.expires_at).getTime() > Date.now()),
                 )
                 .map((credit) => (
                   <span key={credit.id} className="text-muted-foreground">
-                    Use by {new Date(credit.expires_at).toLocaleString()}
+                    {credit.resets_left != null && `${credit.resets_left} × `}
+                    {credit.expires_at
+                      ? `Use by ${new Date(credit.expires_at).toLocaleString()}`
+                      : "No expiry"}
                     {credit.attempt?.result === "nothing_to_reset"
                       ? " · Nothing to reset yet"
                       : credit.attempt?.error

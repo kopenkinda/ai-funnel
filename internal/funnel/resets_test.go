@@ -44,7 +44,8 @@ func TestExpiringResetScheduleAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	x := &resetExecutor{credit: ResetCredit{ID: "credit", Status: "available", ResetType: "codex_rate_limits", ExpiresAt: now().Add(4 * time.Minute)}, result: "nothing_to_reset"}
+	expiry := now().Add(4 * time.Minute)
+	x := &resetExecutor{credit: ResetCredit{ID: "credit", Status: "available", ResetType: "codex_rate_limits", ExpiresAt: &expiry}, result: "nothing_to_reset"}
 	m.RegisterExecutor(x)
 	a := &App{store: s, core: m}
 	_ = s.change(func(d *diskState) error {
@@ -92,7 +93,7 @@ func TestExpiringResetScheduleAndRestart(t *testing.T) {
 		t.Fatal("redeemed credit repeated after restart")
 	}
 	for _, expiry := range []time.Time{now().Add(-time.Minute), now().Add(time.Hour)} {
-		x.credit.ExpiresAt = expiry
+		x.credit.ExpiresAt = &expiry
 		_ = reopened.change(func(d *diskState) error {
 			d.ResetAttempts = nil
 			d.Snapshots[auth.ID] = Snapshot{ResetCredits: &ResetCredits{Items: []ResetCredit{x.credit}}}

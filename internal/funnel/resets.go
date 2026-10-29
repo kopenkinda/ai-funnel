@@ -16,12 +16,27 @@ type ResetCredit struct {
 	ID        string        `json:"id"`
 	Status    string        `json:"status"`
 	ResetType string        `json:"reset_type"`
-	ExpiresAt time.Time     `json:"expires_at"`
+	ExpiresAt *time.Time    `json:"expires_at,omitempty"`
+	Remaining *int          `json:"resets_left,omitempty"`
+	UsableNow bool          `json:"usable_now,omitempty"`
 }
 type ResetAttempt struct {
-	At     time.Time `json:"at"`
-	Result string    `json:"result"`
-	Error  string    `json:"error,omitempty"`
+	At        time.Time `json:"at"`
+	Result    string    `json:"result"`
+	Error     string    `json:"error,omitempty"`
+	RequestID string    `json:"requestId,omitempty"`
+	Remaining int       `json:"remaining,omitempty"`
+}
+
+func (c ResetCredit) count() int {
+	if c.Remaining != nil {
+		return max(0, *c.Remaining)
+	}
+	return 1
+}
+
+func resetAttemptBlocks(credit ResetCredit, attempt ResetAttempt) bool {
+	return terminalReset(attempt.Result) && (credit.ResetType != "claude_rate_limits" || credit.count() >= attempt.Remaining)
 }
 
 // Match T3 Code's idempotency key so a hub client and the scheduler can safely
@@ -33,14 +48,19 @@ func resetRequestID(accountID, creditID string) string {
 func activeCredits(items []ResetCredit, at time.Time) []ResetCredit {
 	result := []ResetCredit{}
 	for _, credit := range items {
-		if credit.Status == "available" && credit.ResetType == "codex_rate_limits" && credit.ExpiresAt.After(at) {
+		if credit.Status == "available" && credit.count() > 0 && (credit.ResetType == "codex_rate_limits" || credit.ResetType == "claude_rate_limits") && (credit.ExpiresAt == nil || credit.ExpiresAt.After(at)) {
 			result = append(result, credit)
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ExpiresAt.Before(result[j].ExpiresAt) })
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].ExpiresAt != nil && (result[j].ExpiresAt == nil || result[i].ExpiresAt.Before(*result[j].ExpiresAt))
+	})
 	return result
 }
 func (a *App) fetchCredits(ctx context.Context, auth *core.Auth, previous *ResetCredits) *ResetCredits {
+	if auth.Provider == "claude" {
+		return a.fetchClaudeCredits(ctx, auth, previous)
+	}
 	credits := ResetCredits{Items: []ResetCredit{}}
 	if previous != nil {
 		credits = *previous
@@ -132,15 +152,15 @@ func (a *App) CheckExpiringResets(ctx context.Context) {
 		return
 	}
 	for _, auth := range a.core.List() {
-		conn := d.Connections["codex"]
-		if auth.Provider != "codex" || auth.Disabled || !conn.Enabled {
+		conn := d.Connections[auth.Provider]
+		if (auth.Provider != "codex" && auth.Provider != "claude") || auth.Disabled || !conn.Enabled {
 			continue
 		}
 		old := d.Snapshots[auth.ID].ResetCredits
-		due := old == nil || old.CheckedAt == nil
+		due := old == nil || old.CheckedAt == nil || old.Error != ""
 		if old != nil {
 			for _, c := range activeCredits(old.Items, now()) {
-				if !c.ExpiresAt.After(now().Add(5 * time.Minute)) {
+				if c.ExpiresAt != nil && !c.ExpiresAt.After(now().Add(5*time.Minute)) {
 					due = true
 					break
 				}
@@ -150,12 +170,14 @@ func (a *App) CheckExpiringResets(ctx context.Context) {
 			continue
 		}
 		credits := a.fetchCredits(ctx, auth, old)
-		_ = a.store.change(func(d *diskState) error {
+		if err := a.store.change(func(d *diskState) error {
 			s := d.Snapshots[auth.ID]
 			s.ResetCredits = credits
 			d.Snapshots[auth.ID] = s
 			return nil
-		})
+		}); err != nil {
+			continue
+		}
 		if credits.Error != "" {
 			continue
 		}
@@ -165,14 +187,18 @@ func (a *App) CheckExpiringResets(ctx context.Context) {
 			if !current.Settings.AutoUseResets || ctx.Err() != nil {
 				return
 			}
-			if !credit.ExpiresAt.After(now()) || credit.ExpiresAt.After(now().Add(5*time.Minute)) || terminalReset(attempt.Result) || (!attempt.At.IsZero() && now().Sub(attempt.At) < 30*time.Second) {
+			if credit.ExpiresAt == nil || !credit.ExpiresAt.After(now()) || credit.ExpiresAt.After(now().Add(5*time.Minute)) || resetAttemptBlocks(credit, attempt) || (!attempt.At.IsZero() && now().Sub(attempt.At) < 30*time.Second) || (auth.Provider == "claude" && !credit.UsableNow) {
 				continue
 			}
 			latest, ok := a.core.GetByID(auth.ID)
-			if !current.Connections["codex"].Enabled || !ok || latest.Disabled {
+			if !current.Connections[auth.Provider].Enabled || !ok || latest.Disabled {
 				break
 			}
-			_, _, _ = a.consumeResetLocked(ctx, latest, credit.ID)
+			if auth.Provider == "claude" {
+				_ = a.consumeClaudeResetLocked(ctx, latest, credit)
+			} else {
+				_, _, _ = a.consumeResetLocked(ctx, latest, credit.ID)
+			}
 			// A reset affects all current limits. Only try one credit per account per tick.
 			break
 		}

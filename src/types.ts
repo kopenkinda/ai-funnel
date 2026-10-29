@@ -25,7 +25,8 @@ export interface Account {
     items?: {
       id: string;
       status: string;
-      expires_at: string;
+      expires_at?: string;
+      resets_left?: number;
       attempt?: { at: string; result: string; error?: string };
     }[];
   };

@@ -9,17 +9,52 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
     .getByLabel("Dashboard key", { exact: true })
     .fill("browser-test-dashboard-key");
   await page.getByRole("button", { name: "Unlock dashboard" }).click();
+  await expect(page.getByText("No usage yet", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Connect your first provider" }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Connect your first provider" })
+    page.getByRole("button", { name: /Connect.*provider/ }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  const disabled = page.getByRole("region", { name: "Disabled providers" });
+  const codex = page.getByRole("region", {
+    name: "Codex connection",
+    exact: true,
+  });
+  const claude = page.getByRole("region", {
+    name: "Claude connection",
+    exact: true,
+  });
+  await expect(disabled.getByRole("region")).toHaveCount(2);
+  const unsupported = page.getByRole("region", {
+    name: "Unsupported providers",
+  });
+  await expect(unsupported).toBeVisible();
+  await expect(unsupported.getByRole("button")).toHaveCount(0);
+  await expect(unsupported.locator('[data-slot="card-title"]')).toHaveText([
+    "Gemini",
+    "Google AI Studio",
+    "Vertex AI",
+    "Antigravity",
+    "Grok",
+    "Kimi",
+    "Devin",
+    "Meta",
+    "OpenAI compatible",
+  ]);
+  await claude
+    .getByRole("button", { name: "Add account", exact: true })
     .click();
   await expect(
-    page
-      .getByRole("group", { name: "Provider", exact: true })
-      .getByRole("button"),
-  ).toHaveText(["Codex", "Claude"]);
+    page.getByRole("dialog", { name: "Add Claude account" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "JSON file", exact: true }).click();
+  await expect(
+    page.getByLabel("Credential JSON", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await codex.getByRole("button", { name: "Add account", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Add Codex account" }),
+  ).toBeVisible();
   await expect(page.getByLabel("Server URL")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Continue to sign-in" }),
@@ -34,12 +69,15 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
   expect(response.status()).toBe(201);
   await page.reload();
   expect((await request.get("/providers/codex-dark.svg")).status()).toBe(200);
-  await page.getByRole("button", { name: "Connections", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Add account", exact: true }),
+    page.getByRole("region", { name: "Codex usage", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await expect(disabled.getByRole("region")).toHaveCount(2);
+  await codex.getByRole("button", { name: "Add account", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Add Codex account" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Add account", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Add account" })).toBeVisible();
   await page.getByRole("button", { name: "JSON file", exact: true }).click();
   await page.getByLabel("auth.json", { exact: true }).setInputFiles({
     name: "auth.json",
@@ -67,17 +105,34 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
     ),
   });
   await page.getByRole("button", { name: "Import account" }).click();
-  await expect(page.getByRole("dialog", { name: "Add account" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("dialog", { name: "Add Codex account" }),
+  ).toHaveCount(0);
   const imported = await request
     .get("/api/state", {
       headers: { Authorization: "Bearer browser-test-dashboard-key" },
     })
     .then((r) => r.json());
   expect(imported.connections[0].accounts[0].email).toBe("browser@example.com");
+  const enabled = page.getByRole("region", { name: "Enabled providers" });
+  await expect(
+    enabled.getByRole("region", { name: "Codex connection" }),
+  ).toBeVisible();
+  await expect(
+    disabled.getByRole("region", { name: "Claude connection" }),
+  ).toBeVisible();
+  await codex.getByRole("button", { name: "Pause Codex", exact: true }).click();
+  await expect(disabled.getByRole("region")).toHaveCount(2);
+  await codex
+    .getByRole("button", { name: "Resume Codex", exact: true })
+    .click();
+  await expect(
+    enabled.getByRole("region", { name: "Codex connection" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "API keys", exact: true }).click();
-  await page.getByRole("button", { name: "Add shared key" }).click();
+  await page
+    .getByRole("button", { name: "Add your first key", exact: true })
+    .click();
   await page.getByLabel("Key name", { exact: true }).fill("Devices");
   await page.getByRole("checkbox", { name: "Codex", exact: true }).check();
   await page
@@ -88,7 +143,9 @@ test("dashboard authentication, provider setup, and direct sign-in", async ({
     page.getByRole("dialog", { name: "Your key is ready" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(page.getByText("Devices", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Devices", exact: true }),
+  ).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("button", { name: "Usage", exact: true }),
@@ -143,15 +200,43 @@ test("existing key access can be edited with provider model selections", async (
   await page.goto("/");
   await page.getByRole("button", { name: "API keys", exact: true }).click();
   await page
-    .getByRole("button", { name: "Edit Editable devices", exact: true })
+    .getByRole("button", { name: "Select Editable devices", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Edit API key" });
+  const dialog = page.getByRole("form", { name: "API key settings" });
   await expect(dialog.getByLabel("Key name", { exact: true })).toHaveValue(
     "Editable devices",
   );
   await expect(dialog.getByLabel("Requests per day")).toHaveValue("50");
+  await dialog.getByLabel("Key name", { exact: true }).fill("Unsaved name");
+  await dialog.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(dialog.getByLabel("Key name", { exact: true })).toHaveValue(
+    "Editable devices",
+  );
+  await page
+    .getByRole("switch", { name: "Pause Editable devices", exact: true })
+    .click();
+  await expect(
+    page.getByRole("switch", { name: "Resume Editable devices", exact: true }),
+  ).not.toBeChecked();
+  await page
+    .getByRole("switch", { name: "Resume Editable devices", exact: true })
+    .click();
+  await expect(
+    page.getByRole("switch", { name: "Pause Editable devices", exact: true }),
+  ).toBeChecked();
   await expect(dialog.getByRole("group", { name: "Key source" })).toHaveCount(
     0,
+  );
+  await page.getByRole("button", { name: "Add key", exact: true }).click();
+  const createDialog = page.getByRole("dialog", { name: "Add a shared key" });
+  await createDialog
+    .getByLabel("Key name", { exact: true })
+    .fill("Another device");
+  await createDialog
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(dialog.getByLabel("Key name", { exact: true })).toHaveValue(
+    "Editable devices",
   );
   await dialog
     .getByRole("checkbox", { name: "All models", exact: true })
@@ -202,7 +287,9 @@ test("existing key access can be edited with provider model selections", async (
   await dialog
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
-  await expect(dialog).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Save changes", exact: true }),
+  ).toBeDisabled();
   const state = await request
     .get("/api/state", { headers })
     .then((r) => r.json());
@@ -219,7 +306,7 @@ test("existing key access can be edited with provider model selections", async (
   await page.reload();
   await page.getByRole("button", { name: "API keys", exact: true }).click();
   await page
-    .getByRole("button", { name: "Edit Coding tools", exact: true })
+    .getByRole("button", { name: "Select Coding tools", exact: true })
     .click();
   await expect(dialog.getByLabel("Selected models")).toContainText(models[1]);
   await expect(
@@ -232,7 +319,9 @@ test("existing key access can be edited with provider model selections", async (
   await dialog
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
-  await expect(dialog).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Save changes", exact: true }),
+  ).toBeDisabled();
   const visible = await request.get("/providers/codex/codex/v1/models", {
     headers: { Authorization: `Bearer ${created.token}` },
   });
@@ -296,6 +385,23 @@ test("usage shows reported limits and persists email privacy", async ({
               {
                 ...account,
                 quotas: [{ label: "Fable 7d", remaining: 0, resetsAt: null }],
+                resetCredits: {
+                  available: 3,
+                  applicable: 0,
+                  items: [
+                    {
+                      id: "expiring",
+                      status: "available",
+                      resets_left: 2,
+                      expires_at: "2035-01-01T00:00:00Z",
+                    },
+                    {
+                      id: "no-expiry",
+                      status: "available",
+                      resets_left: 1,
+                    },
+                  ],
+                },
               },
             ],
           },
@@ -325,6 +431,16 @@ test("usage shows reported limits and persists email privacy", async ({
   await expect(
     page.getByRole("tooltip").getByText("device@example.com"),
   ).toHaveCSS("filter", /blur\(/);
+  const claude = page.getByRole("region", {
+    name: "Claude usage",
+    exact: true,
+  });
+  await claude.getByText("3 banked resets", { exact: true }).hover();
+  const claudeResets = page
+    .getByRole("tooltip")
+    .filter({ hasText: "3 banked" });
+  await expect(claudeResets).toContainText("2 × Use by");
+  await expect(claudeResets).toContainText("1 × No expiry");
   await page.getByRole("button", { name: "Show emails" }).click();
   await expect(email).toHaveCSS("filter", "none");
   await page.reload();

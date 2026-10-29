@@ -3,12 +3,9 @@ import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
   Activity01Icon,
   Add01Icon,
-  ArrowDown01Icon,
-  ArrowRight01Icon,
   ArrowUpRight01Icon,
   Cancel01Icon,
   Delete02Icon,
-  Edit02Icon,
   Key01Icon,
   Layers01Icon,
   Link01Icon,
@@ -20,10 +17,17 @@ import {
   Sun01Icon,
   Settings01Icon,
 } from "@hugeicons/core-free-icons";
-import type { PublicConnection, PublicKey } from "./types.ts";
-import { api, relative, type State } from "./api.ts";
+import {
+  providers,
+  providerNames,
+  type Provider,
+  type PublicConnection,
+} from "./types.ts";
+import { cn } from "@/lib/utils";
+import { api, type State } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { UsageMetrics } from "./metrics";
+import { KeyManager } from "./keys";
 import { ActivityLog } from "./activity";
 import { DashboardSettings } from "./settings";
 import { UsageOverview } from "./usage.tsx";
@@ -40,7 +44,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 
 import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
 import {
@@ -61,11 +64,6 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -85,18 +83,32 @@ const tabs = [
 type Tab = (typeof tabs)[number]["id"];
 const empty: State = { connections: [], keys: [], requests: [], publicUrl: "" };
 
+// Native upstreams in the embedded CLIProxyAPI version that Funnel has not integrated.
+const unsupportedProviders: {
+  name: string;
+  logo?: string;
+  darkLogo?: string;
+}[] = [
+  { name: "Gemini", logo: "gemini.svg" },
+  { name: "Google AI Studio", logo: "google.svg" },
+  { name: "Vertex AI", logo: "google-cloud.svg" },
+  { name: "Antigravity", logo: "antigravity.svg" },
+  { name: "Grok", logo: "grok-light.svg", darkLogo: "grok-dark.svg" },
+  { name: "Kimi", logo: "kimi-icon.svg" },
+  { name: "Devin", logo: "devin.svg" },
+  { name: "Meta", logo: "meta.svg" },
+  { name: "OpenAI compatible" },
+];
+
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [state, setState] = useState<State>(empty);
   const [tab, setTab] = useState<Tab>("pool");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
-  const [modal, setModal] = useState<"connect" | "key" | "settings" | null>(
-    null,
-  );
+  const [modal, setModal] = useState<"key" | "settings" | null>(null);
   const [details, setDetails] = useState<PublicConnection | null>(null);
-  const [reconnect, setReconnect] = useState<PublicConnection | null>(null);
-  const [editKey, setEditKey] = useState<PublicKey | null>(null);
+  const [accountProvider, setAccountProvider] = useState<Provider | null>(null);
   const [remove, setRemove] = useState<{
     type: "connections" | "keys";
     id: string;
@@ -124,6 +136,15 @@ export function App() {
     return () => clearInterval(timer);
   }, [authenticated]);
   const connections = state.connections;
+  const connected = connections.filter((c) => c.accounts.length > 0);
+  const providerEntries = providers.map((provider) => {
+    const connection = connections.find((c) => c.provider === provider);
+    return {
+      provider,
+      connection,
+      enabled: !!connection?.enabled && connection.accounts.length > 0,
+    };
+  });
   const origin = state.publicUrl || window.location.origin;
   async function action(id: string, task: () => Promise<unknown>) {
     setBusy(id);
@@ -177,7 +198,6 @@ export function App() {
     );
 
   const title = tabs.find((t) => t.id === tab)!.name;
-  const openConnect = () => setModal("connect");
   const openKey = () => setModal("key");
 
   return (
@@ -215,12 +235,6 @@ export function App() {
                   Refresh
                 </Button>
               )}
-              {tab !== "activity" && (
-                <Button onClick={tab === "keys" ? openKey : openConnect}>
-                  <Icon icon={Add01Icon} data-icon="inline-start" />
-                  {tab === "keys" ? "Add shared key" : "Connect provider"}
-                </Button>
-              )}
             </div>
           </header>
           {error && (
@@ -242,172 +256,251 @@ export function App() {
             <UsageMetrics daily={state.daily} hourly={state.hourly} />
           )}
           {tab === "pool" &&
-            (connections.length ? (
+            (connected.length ? (
               <UsageOverview
-                connections={connections}
-                onReconnect={setReconnect}
+                connections={connected}
+                onReconnect={(c) => setAccountProvider(c.provider)}
               />
             ) : (
-              <EmptyPool onConnect={openConnect} />
+              <Empty className="min-h-80 border">
+                <EmptyHeader>
+                  <EmptyTitle>No usage yet</EmptyTitle>
+                </EmptyHeader>
+              </Empty>
             ))}
-          {tab === "connections" &&
-            (connections.length ? (
-              <div className="grid min-w-0 gap-5 xl:grid-cols-2">
-                {connections.map((c) => (
-                  <Card key={c.id} size="sm">
-                    <CardHeader>
-                      <CardTitle className="min-w-0">
-                        <span className="flex items-center gap-3">
-                          <ProviderIcon provider={c.provider} />
-                          <span className="min-w-0 wrap-anywhere">
-                            <PrivateText>{c.name}</PrivateText>
-                          </span>
-                        </span>
-                      </CardTitle>
-                      <CardAction>
-                        <Badge variant={c.error ? "destructive" : "secondary"}>
-                          {!c.enabled
-                            ? "Paused"
-                            : c.error
-                              ? "Needs attention"
-                              : "Connected"}
-                        </Badge>
-                      </CardAction>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex items-center gap-5 text-sm">
-                        <span>
-                          <strong className="font-medium">
-                            {c.accounts.length}
-                          </strong>{" "}
-                          <span className="text-muted-foreground">
-                            accounts
-                          </span>
-                        </span>
-                        <span>
-                          <strong className="font-medium">
-                            {c.models.length}
-                          </strong>{" "}
-                          <span className="text-muted-foreground">models</span>
-                        </span>
-                      </div>
-                      {c.error && (
-                        <div className="mt-4">
-                          <ErrorMessage>{c.error}</ErrorMessage>
-                          {c.provider === "codex" && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="mt-3"
-                              onClick={() => setReconnect(c)}
+          {tab === "connections" && (
+            <div className="flex min-w-0 flex-col gap-6">
+              {[true, false].map((enabled) => {
+                const entries = providerEntries.filter(
+                  (p) => p.enabled === enabled,
+                );
+                if (!entries.length) return null;
+                const group = enabled ? "Enabled" : "Disabled";
+                return (
+                  <section
+                    key={group}
+                    aria-label={`${group} providers`}
+                    className="flex min-w-0 flex-col gap-3"
+                  >
+                    <h2 className="text-sm font-medium text-muted-foreground">
+                      {group}
+                    </h2>
+                    <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+                      {entries.map(({ provider, connection: c }) => (
+                        <Card
+                          key={provider}
+                          size="sm"
+                          role="region"
+                          aria-label={`${providerNames[provider]} connection`}
+                        >
+                          <CardHeader>
+                            <CardTitle
+                              className={cn(
+                                "min-w-0",
+                                !enabled && "opacity-50",
+                              )}
                             >
-                              Add account
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </CardContent>
-                    <CardFooter className="flex-wrap justify-between gap-3">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setDetails(c)}
-                      >
-                        URL & setup
-                        <Icon
-                          icon={ArrowUpRight01Icon}
-                          data-icon="inline-end"
-                        />
-                      </Button>
-                      <div className="flex items-center gap-1">
-                        {(c.provider === "codex" ||
-                          c.provider === "claude") && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setReconnect(c)}
+                              <span className="flex items-center gap-3">
+                                <ProviderIcon provider={provider} />
+                                <span className="min-w-0 wrap-anywhere">
+                                  <PrivateText>
+                                    {c?.name || providerNames[provider]}
+                                  </PrivateText>
+                                </span>
+                              </span>
+                            </CardTitle>
+                            {(c?.error ||
+                              (c && !c.enabled && c.accounts.length > 0)) && (
+                              <CardAction>
+                                <Badge
+                                  variant={
+                                    c.error ? "destructive" : "secondary"
+                                  }
+                                >
+                                  {c.error ? "Needs attention" : "Paused"}
+                                </Badge>
+                              </CardAction>
+                            )}
+                          </CardHeader>
+                          <CardContent>
+                            <div
+                              className={cn(
+                                "flex items-center gap-5 text-sm",
+                                !enabled && "opacity-50",
+                              )}
+                            >
+                              <span>
+                                <strong className="font-medium">
+                                  {c?.accounts.length ?? 0}
+                                </strong>{" "}
+                                <span className="text-muted-foreground">
+                                  accounts
+                                </span>
+                              </span>
+                              <span>
+                                <strong className="font-medium">
+                                  {c?.models.length ?? 0}
+                                </strong>{" "}
+                                <span className="text-muted-foreground">
+                                  models
+                                </span>
+                              </span>
+                            </div>
+                            {c?.error && (
+                              <div className="mt-4">
+                                <ErrorMessage>{c.error}</ErrorMessage>
+                              </div>
+                            )}
+                          </CardContent>
+                          <CardFooter className="flex-wrap justify-between gap-3">
+                            {c && c.accounts.length > 0 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setDetails(c)}
+                              >
+                                URL & setup
+                                <Icon
+                                  icon={ArrowUpRight01Icon}
+                                  data-icon="inline-end"
+                                />
+                              </Button>
+                            )}
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setAccountProvider(provider)}
+                              >
+                                Add account
+                              </Button>
+                              {c && c.accounts.length > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label={`Refresh ${c.name}`}
+                                  disabled={!!busy}
+                                  onClick={() =>
+                                    void action(c.id, () =>
+                                      api(`/connections/${c.id}/sync`, "POST"),
+                                    )
+                                  }
+                                >
+                                  {busy === c.id ? (
+                                    <Spinner />
+                                  ) : (
+                                    <Icon icon={Refresh01Icon} />
+                                  )}
+                                </Button>
+                              )}
+                              {c && c.accounts.length > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label={`${c.enabled ? "Pause" : "Resume"} ${c.name}`}
+                                  disabled={!!busy}
+                                  onClick={() =>
+                                    void action(c.id, () =>
+                                      api(`/connections/${c.id}`, "PATCH", {
+                                        enabled: !c.enabled,
+                                      }),
+                                    )
+                                  }
+                                >
+                                  <Icon
+                                    icon={c.enabled ? PauseIcon : PlayIcon}
+                                  />
+                                </Button>
+                              )}
+                              {c && c.accounts.length > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label={`Remove ${c.name}`}
+                                  onClick={() =>
+                                    setRemove({
+                                      type: "connections",
+                                      id: c.id,
+                                      name: c.name,
+                                    })
+                                  }
+                                >
+                                  <Icon icon={Delete02Icon} />
+                                </Button>
+                              )}
+                            </div>
+                          </CardFooter>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+              <section
+                aria-label="Unsupported providers"
+                className="flex min-w-0 flex-col gap-3"
+              >
+                <h2 className="text-sm font-medium text-muted-foreground">
+                  Unsupported
+                </h2>
+                <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+                  {unsupportedProviders.map(({ name, logo, darkLogo }) => (
+                    <Card key={name} size="sm" aria-disabled="true">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-3 opacity-50">
+                          <span
+                            aria-hidden="true"
+                            className="flex size-7 shrink-0 items-center justify-center"
                           >
-                            Add account
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Refresh ${c.name}`}
-                          disabled={!!busy}
-                          onClick={() =>
-                            void action(c.id, () =>
-                              api(`/connections/${c.id}/sync`, "POST"),
-                            )
-                          }
-                        >
-                          {busy === c.id ? (
-                            <Spinner />
-                          ) : (
-                            <Icon icon={Refresh01Icon} />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`${c.enabled ? "Pause" : "Resume"} ${c.name}`}
-                          disabled={!!busy}
-                          onClick={() =>
-                            void action(c.id, () =>
-                              api(`/connections/${c.id}`, "PATCH", {
-                                enabled: !c.enabled,
-                              }),
-                            )
-                          }
-                        >
-                          <Icon icon={c.enabled ? PauseIcon : PlayIcon} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Remove ${c.name}`}
-                          onClick={() =>
-                            setRemove({
-                              type: "connections",
-                              id: c.id,
-                              name: c.name,
-                            })
-                          }
-                        >
-                          <Icon icon={Delete02Icon} />
-                        </Button>
-                      </div>
-                    </CardFooter>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <EmptyPool onConnect={openConnect} />
-            ))}
+                            {logo ? (
+                              <>
+                                <img
+                                  src={`/providers/${logo}`}
+                                  alt=""
+                                  className={cn(
+                                    "size-full object-contain",
+                                    darkLogo && "dark:hidden",
+                                    logo === "devin.svg" && "dark:invert",
+                                  )}
+                                />
+                                {darkLogo && (
+                                  <img
+                                    src={`/providers/${darkLogo}`}
+                                    alt=""
+                                    className="hidden size-full object-contain dark:block"
+                                  />
+                                )}
+                              </>
+                            ) : (
+                              <Icon icon={Link01Icon} size={24} />
+                            )}
+                          </span>
+                          {name}
+                        </CardTitle>
+                      </CardHeader>
+                    </Card>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
           {tab === "keys" &&
             (state.keys.length ? (
-              <div className="flex flex-col gap-5">
-                {state.keys.map((k) => (
-                  <KeyRow
-                    key={k.id}
-                    clientKey={k}
-                    connections={connections}
-                    onEdit={() => {
-                      setEditKey(k);
-                      setModal("key");
-                    }}
-                    busy={!!busy}
-                    onToggle={() =>
-                      void action(k.id, () =>
-                        api(`/keys/${k.id}`, "PATCH", { enabled: !k.enabled }),
-                      )
-                    }
-                    onRemove={() =>
-                      setRemove({ type: "keys", id: k.id, name: k.name })
-                    }
-                  />
-                ))}
-              </div>
+              <KeyManager
+                keys={state.keys}
+                connections={connections}
+                busy={!!busy}
+                onAdd={openKey}
+                onSaved={reload}
+                onToggle={(k) =>
+                  void action(k.id, () =>
+                    api(`/keys/${k.id}`, "PATCH", { enabled: !k.enabled }),
+                  )
+                }
+                onRemove={(k) =>
+                  setRemove({ type: "keys", id: k.id, name: k.name })
+                }
+              />
             ) : (
               <Empty className="min-h-80 border">
                 <EmptyHeader>
@@ -445,25 +538,18 @@ export function App() {
           onClose={() => setModal(null)}
         />
       )}
-      {modal === "connect" && (
-        <ConnectionForm onClose={() => setModal(null)} onSaved={reload} />
-      )}
-      {reconnect && (
+      {accountProvider && (
         <ConnectionForm
-          reconnect={reconnect}
-          onClose={() => setReconnect(null)}
+          provider={accountProvider}
+          connection={connections.find((c) => c.provider === accountProvider)}
+          onClose={() => setAccountProvider(null)}
           onSaved={reload}
         />
       )}
       {modal === "key" && (
         <KeyForm
-          key={editKey?.id ?? "new"}
-          clientKey={editKey ?? undefined}
           connections={connections}
-          onClose={() => {
-            setModal(null);
-            setEditKey(null);
-          }}
+          onClose={() => setModal(null)}
           onSaved={reload}
         />
       )}
@@ -605,173 +691,6 @@ function ThemeSwitch() {
     >
       <Icon icon={dark ? Sun01Icon : Moon01Icon} />
     </Button>
-  );
-}
-
-function EmptyPool({ onConnect }: { onConnect: () => void }) {
-  return (
-    <Empty className="min-h-96 border">
-      <EmptyHeader>
-        <EmptyMedia>
-          <div className="flex items-center gap-2">
-            <ProviderIcon provider="codex" />
-            <ProviderIcon provider="claude" />
-          </div>
-        </EmptyMedia>
-        <EmptyTitle>Bring your accounts together.</EmptyTitle>
-        <EmptyDescription>
-          Connect your Codex and Claude accounts.
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button onClick={onConnect}>
-          <Icon icon={Add01Icon} data-icon="inline-start" />
-          Connect your first provider
-        </Button>
-      </EmptyContent>
-    </Empty>
-  );
-}
-
-function KeyRow({
-  clientKey: k,
-  connections,
-  busy,
-  onToggle,
-  onEdit,
-  onRemove,
-}: {
-  clientKey: PublicKey;
-  connections: PublicConnection[];
-  busy: boolean;
-  onToggle: () => void;
-  onEdit: () => void;
-  onRemove: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const expired = !!k.expiresAt && Date.parse(k.expiresAt) < Date.now();
-  return (
-    <Card size="sm" aria-label={`Key ${k.name}`}>
-      <CardHeader>
-        <CardTitle className="min-w-0 wrap-anywhere">
-          <PrivateText>{k.name}</PrivateText>
-        </CardTitle>
-        <CardDescription>
-          <code>{k.prefix}••••••••</code>
-        </CardDescription>
-        <CardAction>
-          <div className="flex items-center gap-2">
-            <Badge variant={expired || !k.enabled ? "secondary" : "outline"}>
-              {expired ? "Expired" : k.enabled ? "Active" : "Paused"}
-            </Badge>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              disabled={busy}
-              aria-label={`Edit ${k.name}`}
-              onClick={onEdit}
-            >
-              <Icon icon={Edit02Icon} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              disabled={busy}
-              aria-label={`${k.enabled ? "Pause" : "Resume"} ${k.name}`}
-              onClick={onToggle}
-            >
-              <Icon icon={k.enabled ? PauseIcon : PlayIcon} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Remove ${k.name}`}
-              onClick={onRemove}
-            >
-              <Icon icon={Delete02Icon} />
-            </Button>
-          </div>
-        </CardAction>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            {k.grants.map((g) => {
-              const c = connections.find((c) => c.id === g.connectionId);
-              return (
-                <Badge key={g.connectionId} variant="secondary">
-                  <PrivateText>{c?.name || "Removed connection"}</PrivateText>
-                </Badge>
-              );
-            })}
-          </div>
-          <p className="text-sm tabular-nums">
-            {k.requestsToday}
-            {k.dailyLimit ? ` / ${k.dailyLimit}` : ""}{" "}
-            <span className="text-muted-foreground">requests today</span>
-          </p>
-        </div>
-      </CardContent>
-      <CardFooter className="block">
-        <Collapsible open={expanded} onOpenChange={setExpanded}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">
-              Last used {k.lastUsedAt ? relative(k.lastUsedAt) : "never"}
-              {k.expiresAt
-                ? ` · Expires ${new Date(k.expiresAt).toLocaleDateString()}`
-                : " · No expiration"}
-            </p>
-            <CollapsibleTrigger render={<Button variant="ghost" size="sm" />}>
-              {expanded ? "Hide access" : "View access"}
-              <Icon
-                icon={expanded ? ArrowDown01Icon : ArrowRight01Icon}
-                data-icon="inline-end"
-              />
-            </CollapsibleTrigger>
-          </div>
-          <CollapsibleContent>
-            <div
-              className="flex flex-col gap-4 pt-4"
-              aria-label={`Access for ${k.name}`}
-            >
-              <Separator />
-              {k.grants.map((g) => {
-                const c = connections.find((c) => c.id === g.connectionId);
-                return (
-                  <div key={g.connectionId} className="flex flex-col gap-1">
-                    <p className="text-sm font-medium">
-                      <PrivateText>
-                        {c?.name || "Removed connection"}
-                      </PrivateText>
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      <PrivateText>
-                        {g.accountIds
-                          ? g.accountIds
-                              .map(
-                                (id) =>
-                                  c?.accounts.find((a) => a.id === id)?.name ||
-                                  "Missing account",
-                              )
-                              .join(", ")
-                          : k.imported && c?.provider === "codex"
-                            ? "All accounts in this provider"
-                            : "Whole connection pool"}
-                      </PrivateText>
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {g.models
-                        ? `Models: ${g.models.join(", ")}`
-                        : "All permitted upstream models"}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      </CardFooter>
-    </Card>
   );
 }
 
