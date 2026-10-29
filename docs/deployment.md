@@ -23,6 +23,8 @@ tailscale serve status
 
 Keep Tailscale Funnel disabled. The proxy serves only the tailnet and does not change the existing public reverse proxy. Disable device key expiry in the Tailscale admin console for unattended operation.
 
+If the server also advertises as an exit node, persist IPv4 and IPv6 forwarding in `/etc/sysctl.d/99-tailscale.conf` and apply that file with `sysctl -p`. Both `net.ipv4.ip_forward` and `net.ipv6.conf.all.forwarding` must be `1`. Exit-node approval is separate from the app's private HTTPS configuration.
+
 ## State and updates
 
 Pushes to `main` reach Coolify through the registered GitHub App webhook. Coolify rebuilds the Dockerfile and restarts only this application. Loopback port mapping requires a brief stop/start rather than a rolling update. The named data volume survives replacement containers.
