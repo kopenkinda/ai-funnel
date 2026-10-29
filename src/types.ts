@@ -49,6 +49,7 @@ export interface Grant {
   connectionId: string;
   accountIds: string[] | null;
   models: string[] | null;
+  subscriptionOnly?: boolean;
 }
 export interface PublicKey {
   id: string;

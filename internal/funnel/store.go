@@ -18,9 +18,10 @@ import (
 )
 
 type Grant struct {
-	ConnectionID string   `json:"connectionId"`
-	AccountIDs   []string `json:"accountIds"`
-	Models       []string `json:"models"`
+	ConnectionID     string   `json:"connectionId"`
+	AccountIDs       []string `json:"accountIds"`
+	Models           []string `json:"models"`
+	SubscriptionOnly bool     `json:"subscriptionOnly,omitempty"`
 }
 type Key struct {
 	ID            string     `json:"id"`

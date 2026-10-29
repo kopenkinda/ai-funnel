@@ -20,6 +20,9 @@ func validateKey(k Key, connections map[string]Connection, accounts map[string]s
 			return fmt.Errorf("Select valid providers, accounts, and models.")
 		}
 		seen[g.ConnectionID] = true
+		if g.SubscriptionOnly && conn.Provider != "codex" {
+			return fmt.Errorf("Subscription-only access is supported for Codex.")
+		}
 		for _, id := range g.AccountIDs {
 			if accounts[id] != conn.Provider {
 				return fmt.Errorf("Account not found in this provider.")

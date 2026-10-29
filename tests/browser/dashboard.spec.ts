@@ -260,6 +260,21 @@ test("key access can be edited, archived, and restored with the same credential"
     "Editable devices",
   );
   await expect(dialog.getByLabel("Requests per day")).toHaveValue("50");
+  const subscriptionOnly = dialog.getByRole("checkbox", {
+    name: "Subscription only",
+    exact: true,
+  });
+  await expect(subscriptionOnly).not.toBeChecked();
+  await subscriptionOnly.check();
+  await dialog.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(subscriptionOnly).not.toBeChecked();
+  await subscriptionOnly.check();
+  await dialog
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("button", { name: "Save changes", exact: true }),
+  ).toBeDisabled();
   await dialog.getByLabel("Key name", { exact: true }).fill("Unsaved name");
   await dialog.getByRole("button", { name: "Reset", exact: true }).click();
   await expect(dialog.getByLabel("Key name", { exact: true })).toHaveValue(
@@ -353,7 +368,12 @@ test("key access can be edited, archived, and restored with the same credential"
   expect(updated.dailyLimit).toBeNull();
   expect(updated.prefix).toBe(created.key.prefix);
   expect(updated.grants).toEqual([
-    { connectionId: "codex", accountIds: null, models: [models[1]] },
+    {
+      connectionId: "codex",
+      accountIds: null,
+      models: [models[1]],
+      subscriptionOnly: true,
+    },
     { connectionId: "claude", accountIds: null, models: null },
   ]);
   await page.reload();
@@ -362,6 +382,7 @@ test("key access can be edited, archived, and restored with the same credential"
     .getByRole("button", { name: "Select Coding tools", exact: true })
     .click();
   await expect(dialog.getByLabel("Selected models")).toContainText(models[1]);
+  await expect(subscriptionOnly).toBeChecked();
   await expect(
     dialog.getByRole("checkbox", { name: "Claude", exact: true }),
   ).toBeChecked();

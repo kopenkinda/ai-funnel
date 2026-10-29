@@ -611,6 +611,23 @@ export function KeyForm({
                     </Field>
                     {grant && (
                       <FieldGroup className={cn("gap-4", inline && "pl-7")}>
+                        {c.provider === "codex" && (
+                          <Field orientation="horizontal">
+                            <Checkbox
+                              id={`${formId}-subscription-${c.id}`}
+                              checked={grant.subscriptionOnly ?? false}
+                              disabled={busy}
+                              onCheckedChange={(checked) =>
+                                update(c.id, { subscriptionOnly: checked })
+                              }
+                            />
+                            <FieldLabel
+                              htmlFor={`${formId}-subscription-${c.id}`}
+                            >
+                              Subscription only
+                            </FieldLabel>
+                          </Field>
+                        )}
                         <FieldSet>
                           <FieldLegend variant="label" className="sr-only">
                             Accounts for <PrivateText>{c.name}</PrivateText>

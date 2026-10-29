@@ -37,6 +37,8 @@ Start these accounts from scratch. There is no codex-lb migration or account imp
 
 Use the edit action under **API keys** to change a key's name, providers, accounts, models, request cap or expiration. The key value and usage history stay the same. Changes apply to subsequent requests and WebSocket turns.
 
+**Codex → Subscription only** uses accounts while their live subscription windows have allowance remaining, including accounts with purchased credits. Funnel checks before each execution, retry, and WebSocket turn, skips exhausted or unverifiable accounts, and returns 429 when none are eligible. Other keys keep their existing access. Requests already in flight and delayed provider usage reporting can spend some purchased credits near the limit. This is a subscription cutoff, not a hard credit spending cap.
+
 **Archive** revokes a key's access and keeps its settings and lifetime usage. Find it under **Archived** to restore it. Restored keys stay paused until enabled.
 
 Account rows show plan multipliers and exceptional statuses. **Use reset** redeems the displayed banked credit, with its expiry shown underneath. Manual use works independently of automatic resets for both Codex and Claude.

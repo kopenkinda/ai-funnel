@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
+	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 type websocketPolicyKey struct{}
@@ -15,6 +17,7 @@ type websocketPolicy struct {
 	connection Connection
 	grant      Grant
 	principal  string
+	selected   *atomic.Pointer[core.Auth]
 }
 type websocketAccess struct{ app *App }
 
@@ -31,6 +34,14 @@ func (p *websocketAccess) Authenticate(ctx context.Context, r *http.Request) (*s
 		return nil, sdkaccess.NewDeniedError("Supply a model in the JSON request.", 400)
 	}
 	_, _, keyID, status, message := p.app.authorizeProvider(policy.connection.Provider, policy.connection.ID, bearer(r), payload.Model, true, &policy.grant)
+	// A duplex upstream socket can forward turns without re-entering the selector.
+	// Recheck the bound account here before the SDK sends each subsequent turn.
+	if status == 200 && policy.grant.SubscriptionOnly && policy.selected != nil {
+		if selected := policy.selected.Load(); selected != nil && !p.app.codexSubscriptionAvailable(ctx, selected) {
+			status = 429
+			message = "The bound Codex account no longer has verified subscription allowance remaining."
+		}
+	}
 	if status != 200 {
 		if keyID != "" {
 			p.app.logRequest(RequestLog{ID: token()[:24], At: now(), ConnectionID: policy.connection.ID, Provider: policy.connection.Provider, KeyID: keyID, Model: payload.Model, Transport: "WS", Status: status, ErrorCode: "access_denied"})
@@ -45,8 +56,9 @@ func (a *App) websocket(c *gin.Context, conn Connection, grant Grant, keyID stri
 		return
 	}
 	principal := a.usageIdentity(keyID, conn.ID, "WS", token()[:24])
-	policy := websocketPolicy{conn, grant, principal}
-	ctx := context.WithValue(c.Request.Context(), scopeKey{}, scope{conn.Provider, grant.AccountIDs})
+	selected := &atomic.Pointer[core.Auth]{}
+	policy := websocketPolicy{connection: conn, grant: grant, principal: principal, selected: selected}
+	ctx := context.WithValue(c.Request.Context(), scopeKey{}, scope{provider: conn.Provider, ids: grant.AccountIDs, subscriptionOnly: grant.SubscriptionOnly, selected: selected})
 	ctx = context.WithValue(ctx, websocketPolicyKey{}, policy)
 	c.Request = c.Request.WithContext(ctx)
 	c.Set("userApiKey", principal)

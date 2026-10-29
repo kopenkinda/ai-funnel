@@ -61,9 +61,10 @@ func TestOAuthStorageSurvivesRestart(t *testing.T) {
 }
 
 type captureExecutor struct {
-	provider string
-	mu       sync.Mutex
-	ids      []string
+	provider    string
+	mu          sync.Mutex
+	ids         []string
+	creditUsage map[string]string
 }
 
 func (x *captureExecutor) Identifier() string {
@@ -92,7 +93,13 @@ func (*captureExecutor) Refresh(_ context.Context, a *core.Auth) (*core.Auth, er
 func (*captureExecutor) CountTokens(context.Context, *core.Auth, executor.Request, executor.Options) (executor.Response, error) {
 	return executor.Response{}, fmt.Errorf("not used")
 }
-func (*captureExecutor) HttpRequest(context.Context, *core.Auth, *http.Request) (*http.Response, error) {
+func (x *captureExecutor) HttpRequest(_ context.Context, auth *core.Auth, _ *http.Request) (*http.Response, error) {
+	x.mu.Lock()
+	body, ok := x.creditUsage[auth.ID]
+	x.mu.Unlock()
+	if ok {
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	}
 	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"rate_limit":{"primary_window":{"used_percent":100,"reset_at":1900000000,"limit_window_seconds":18000},"secondary_window":{"used_percent":20,"reset_at":1900000000,"limit_window_seconds":604800}}}`))}, nil
 }
 func TestEmbeddedService(t *testing.T) {
@@ -356,6 +363,96 @@ func TestEmbeddedService(t *testing.T) {
 			t.Fatal(capture.ids)
 		}
 	})
+	t.Run("subscription-only keys use funded accounts until subscription exhaustion on HTTP and WebSocket turns", func(t *testing.T) {
+		const available = `{"credits":{"has_credits":true,"balance":"123"},"rate_limit":{"primary_window":{"used_percent":99},"secondary_window":{"used_percent":50}}}`
+		const exhausted = `{"credits":{"has_credits":true,"balance":"123"},"rate_limit":{"allowed":true,"primary_window":{"used_percent":100},"secondary_window":{"used_percent":50}}}`
+		setUsage := func(a, b string) {
+			capture.mu.Lock()
+			capture.creditUsage = map[string]string{"account-a": a, "account-b@example.com.json": b}
+			capture.ids = nil
+			capture.mu.Unlock()
+		}
+		defer func() {
+			capture.mu.Lock()
+			capture.creditUsage = nil
+			capture.ids = nil
+			capture.mu.Unlock()
+		}()
+		clientKey := makeKey("null")
+		endpoint := ""
+		for id, k := range store.read().Keys {
+			if k.Hash == digest(clientKey) {
+				endpoint = "/api/keys/" + id
+			}
+		}
+		setUsage(exhausted, exhausted)
+		// Existing keys retain their previous access unless explicitly restricted.
+		if status, b := request("POST", path, clientKey, payload); status != 200 {
+			t.Fatalf("unrestricted key: %d %s", status, b)
+		}
+		policy := `{"grants":[{"connectionId":"codex","accountIds":null,"models":null,"subscriptionOnly":true}]}`
+		if status, b := request("PATCH", endpoint, admin, policy); status != 200 {
+			t.Fatalf("save credit policy: %d %s", status, b)
+		}
+		setUsage(exhausted, available)
+		if status, b := request("POST", path, clientKey, payload); status != 200 {
+			t.Fatalf("subscription request: %d %s", status, b)
+		}
+		capture.mu.Lock()
+		selected := append([]string(nil), capture.ids...)
+		capture.mu.Unlock()
+		if !reflect.DeepEqual(selected, []string{"account-b@example.com.json"}) {
+			t.Fatalf("did not select funded account with subscription allowance: %v", selected)
+		}
+		for _, usage := range []string{exhausted, `{}`} {
+			setUsage(usage, exhausted)
+			if status, b := request("POST", path, clientKey, payload); status != 429 || !strings.Contains(string(b), "subscription allowance remaining") {
+				t.Fatalf("credit policy should block: %d %s", status, b)
+			}
+			capture.mu.Lock()
+			n := len(capture.ids)
+			capture.mu.Unlock()
+			if n != 0 {
+				t.Fatal("blocked request reached inference")
+			}
+		}
+		setUsage(exhausted, available)
+		ws, _, err := websocket.DefaultDialer.Dial(strings.Replace(root, "http://", "ws://", 1)+path, http.Header{"Authorization": {"Bearer " + clientKey}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ws.Close()
+		turn := func(want string) {
+			t.Helper()
+			if err := ws.WriteJSON(map[string]any{"type": "response.create", "model": model, "input": []any{}}); err != nil {
+				t.Fatal(err)
+			}
+			_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+			for {
+				_, b, err := ws.ReadMessage()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(b), want) {
+					return
+				}
+			}
+		}
+		turn("response.completed")
+		setUsage(exhausted, exhausted)
+		turn("subscription allowance remaining")
+		capture.mu.Lock()
+		n := len(capture.ids)
+		capture.mu.Unlock()
+		if n != 0 {
+			t.Fatal("pinned WebSocket bypassed credit policy")
+		}
+		if status, b := request("PATCH", endpoint, admin, strings.ReplaceAll(policy, "true", "false")); status != 200 {
+			t.Fatalf("clear credit policy: %d %s", status, b)
+		}
+		turn("Account access changed")
+	})
+
 	t.Run("streaming and model restriction", func(t *testing.T) {
 		stream := strings.TrimSuffix(payload, "}") + `,"stream":true}`
 		status, b := request("POST", path, key, stream)

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
@@ -28,10 +29,15 @@ import (
 type privateRequest struct{}
 type scopeKey struct{}
 type scope struct {
-	provider string
-	ids      []string
+	provider         string
+	ids              []string
+	subscriptionOnly bool
+	selected         *atomic.Pointer[core.Auth]
 }
-type selector struct{ rr core.RoundRobinSelector }
+type selector struct {
+	rr                    core.RoundRobinSelector
+	subscriptionAvailable func(context.Context, *core.Auth) bool
+}
 
 func (s *selector) Pick(ctx context.Context, provider, model string, opts executor.Options, auths []*core.Auth) (*core.Auth, error) {
 	// SDK handlers retain the Gin request even when they create an execution context.
@@ -48,7 +54,28 @@ func (s *selector) Pick(ctx context.Context, provider, model string, opts execut
 			candidates = append(candidates, a)
 		}
 	}
-	return s.rr.Pick(ctx, allowed.provider, model, opts, candidates)
+	if !allowed.subscriptionOnly {
+		return s.rr.Pick(ctx, allowed.provider, model, opts, candidates)
+	}
+	for len(candidates) > 0 {
+		selected, err := s.rr.Pick(ctx, allowed.provider, model, opts, candidates)
+		if err != nil {
+			return nil, err
+		}
+		if allowed.provider == "codex" && s.subscriptionAvailable != nil && s.subscriptionAvailable(ctx, selected) {
+			if allowed.selected != nil {
+				allowed.selected.Store(selected.Clone())
+			}
+			return selected, nil
+		}
+		for i, candidate := range candidates {
+			if candidate.ID == selected.ID {
+				candidates = append(candidates[:i], candidates[i+1:]...)
+				break
+			}
+		}
+	}
+	return nil, &core.Error{Code: "subscription_limit_reached", Message: "No allowed Codex account has verified subscription allowance remaining.", HTTPStatus: 429}
 }
 func contains(items []string, v string) bool {
 	for _, item := range items {
@@ -96,8 +123,10 @@ func NewRuntime(store *Store, host string, port int, publicURL, dist string, add
 	cfg.RequestLog = false
 	cfg.Codex.UpstreamRequestCompression = true
 	sdkauth.RegisterTokenStore(store)
-	manager := core.NewManager(store, &selector{}, nil)
+	selection := &selector{}
+	manager := core.NewManager(store, selection, nil)
 	a := &App{usageOwner: token(), store: store, core: manager, management: management, publicURL: strings.TrimRight(publicURL, "/"), dist: dist, failures: map[string][]int64{}, gate: make(chan struct{}, 1)}
+	selection.subscriptionAvailable = a.codexSubscriptionAvailable
 	a.origins = append([]string{a.publicURL}, additionalOrigins...)
 	sdkusage.RegisterNamedPlugin("ai-funnel:"+store.dir, a)
 	// OAuth callback files stay separate from the encrypted account store.
