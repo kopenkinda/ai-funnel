@@ -18,9 +18,8 @@ const resetCreditURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-cr
 // The T3 hub contract is deliberately narrower than SDK management. It never
 // exports credentials or permits arbitrary outbound requests.
 func (a *App) hub(c *gin.Context) {
-	value := bearer(c.Request)
-	d := a.store.read()
-	if value == "" || (digest(value) != d.Settings.HubTokenHash && digest(value) != digest(a.store.Admin)) {
+	visible, resets, ok := a.hubScope(bearer(c.Request))
+	if !ok {
 		fail(c, 401, "Supply a valid usage hub key.")
 		return
 	}
@@ -28,7 +27,7 @@ func (a *App) hub(c *gin.Context) {
 	if path == "auth-files" && c.Request.Method == "GET" {
 		files := []gin.H{}
 		for _, auth := range a.core.List() {
-			if auth.Provider != "codex" && auth.Provider != "claude" {
+			if auth.Provider != "codex" && auth.Provider != "claude" || !visible(auth) {
 				continue
 			}
 			files = append(files, gin.H{"id": auth.ID, "auth_index": auth.ID, "provider": auth.Provider, "email": str(auth.Metadata["email"]), "disabled": auth.Disabled, "id_token": gin.H{"chatgpt_account_id": str(auth.Metadata["account_id"]), "plan_type": str(auth.Metadata["plan_type"])}})
@@ -49,13 +48,18 @@ func (a *App) hub(c *gin.Context) {
 	if !decode(c, &b) {
 		return
 	}
+	// A slow body must not outlive a revoked key, so resolve the scope again.
+	if visible, resets, ok = a.hubScope(bearer(c.Request)); !ok {
+		fail(c, 401, "Supply a valid usage hub key.")
+		return
+	}
 	auth, ok := a.core.GetByID(b.AuthIndex)
-	if !ok || auth.Disabled {
+	if !ok || auth.Disabled || !visible(auth) {
 		fail(c, 404, "Account unavailable.")
 		return
 	}
 	allowed := b.Method == "GET" && ((auth.Provider == "codex" && (b.URL == "https://chatgpt.com/backend-api/wham/usage" || b.URL == resetCreditURL)) || (auth.Provider == "claude" && b.URL == "https://api.anthropic.com/api/oauth/usage"))
-	if auth.Provider == "codex" && b.Method == "POST" && b.URL == resetCreditURL+"/consume" {
+	if resets && auth.Provider == "codex" && b.Method == "POST" && b.URL == resetCreditURL+"/consume" {
 		var payload struct {
 			CreditID        string `json:"credit_id"`
 			RedeemRequestID string `json:"redeem_request_id"`
@@ -73,7 +77,14 @@ func (a *App) hub(c *gin.Context) {
 			CreditID string `json:"credit_id"`
 		}
 		_ = json.Unmarshal([]byte(b.Data), &payload)
-		status, body, err := a.consumeReset(c.Request.Context(), auth, payload.CreditID)
+		a.resetMu.Lock()
+		defer a.resetMu.Unlock()
+		// Waiting on the reset lock can span a key edit, so check redemption again.
+		if visible, resets, ok = a.hubScope(bearer(c.Request)); !ok || !resets || !visible(auth) {
+			fail(c, 403, "This hub key can't redeem resets.")
+			return
+		}
+		status, body, err := a.consumeResetLocked(c.Request.Context(), auth, payload.CreditID)
 		if err != nil {
 			fail(c, 502, "Provider reset request failed.")
 			return
@@ -88,6 +99,41 @@ func (a *App) hub(c *gin.Context) {
 	}
 	c.JSON(200, gin.H{"status_code": status, "body": string(body)})
 }
+
+// hubScope resolves a hub bearer. The global hub key and the dashboard key see
+// every account and may redeem resets; a per-key hub key sees only the accounts
+// its client key may route to and redeems only when the key allows it.
+func (a *App) hubScope(value string) (visible func(*core.Auth) bool, resets bool, ok bool) {
+	if value == "" {
+		return nil, false, false
+	}
+	d := a.store.read()
+	hash := digest(value)
+	if hash == d.Settings.HubTokenHash || hash == digest(a.store.Admin) {
+		return func(*core.Auth) bool { return true }, true, true
+	}
+	for _, k := range d.Keys {
+		if k.HubHash == "" || k.HubHash != hash || k.ArchivedAt != nil || (k.ExpiresAt != nil && !k.ExpiresAt.After(now())) {
+			continue
+		}
+		pools, accounts := map[string]bool{}, map[string]bool{}
+		for _, g := range k.Grants {
+			conn, found := d.Connections[g.ConnectionID]
+			if !found {
+				continue
+			}
+			if g.AccountIDs == nil {
+				pools[conn.Provider] = true
+			}
+			for _, id := range g.AccountIDs {
+				accounts[conn.Provider+"/"+id] = true
+			}
+		}
+		return func(auth *core.Auth) bool { return pools[auth.Provider] || accounts[auth.Provider+"/"+auth.ID] }, k.HubResets, true
+	}
+	return nil, false, false
+}
+
 func (a *App) accountRequest(ctx context.Context, auth *core.Auth, method, target string, body []byte) (int, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

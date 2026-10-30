@@ -37,6 +37,9 @@ type Key struct {
 	CreatedAt     time.Time  `json:"createdAt"`
 	LastUsedAt    *time.Time `json:"lastUsedAt"`
 	RequestsToday int        `json:"requestsToday"`
+	HubHash       string     `json:"hubHash,omitempty"`
+	HubResets     bool       `json:"hubResets,omitempty"`
+	HasHubKey     bool       `json:"hasHubKey,omitempty"`
 }
 type Connection struct {
 	ID        string    `json:"id"`

@@ -521,6 +521,7 @@ function Dashboard({ tab }: { tab: Tab }) {
               <KeyManager
                 keys={state.keys}
                 connections={connections}
+                origin={origin}
                 busy={!!busy}
                 onAdd={openKey}
                 onSaved={reload}

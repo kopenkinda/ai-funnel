@@ -274,6 +274,60 @@ func TestEmbeddedService(t *testing.T) {
 			model = m
 		}
 	}
+	t.Run("per-key usage hub sees only the key's accounts", func(t *testing.T) {
+		status, b := request("POST", "/api/keys", admin, `{"name":"Hub scoped","grants":[{"connectionId":"codex","accountIds":["account-a"],"models":null}]}`)
+		if status != 201 {
+			t.Fatalf("key %d %s", status, b)
+		}
+		var created struct {
+			Key Key `json:"key"`
+		}
+		_ = json.Unmarshal(b, &created)
+		status, b = request("POST", "/api/keys/"+created.Key.ID+"/hub-token", admin, "")
+		if status != 201 {
+			t.Fatalf("hub token %d %s", status, b)
+		}
+		var hub struct {
+			Token string `json:"token"`
+		}
+		_ = json.Unmarshal(b, &hub)
+		status, b = request("GET", "/v0/management/auth-files", hub.Token, "")
+		if status != 200 || !strings.Contains(string(b), `"account-a"`) || strings.Contains(string(b), "account-b") || strings.Contains(string(b), "account-c") {
+			t.Fatalf("hub inventory not scoped %d %s", status, b)
+		}
+		status, _ = request("POST", "/v0/management/api-call", hub.Token, `{"auth_index":"account-b@example.com.json","method":"GET","url":"https://chatgpt.com/backend-api/wham/usage"}`)
+		if status != 404 {
+			t.Fatal("hub read an account outside the key", status)
+		}
+		status, _ = request("POST", "/v0/management/api-call", hub.Token, `{"auth_index":"account-a","method":"GET","url":"https://chatgpt.com/backend-api/wham/usage"}`)
+		if status != 200 {
+			t.Fatal("hub could not read its account", status)
+		}
+		consume := `{"auth_index":"account-a","method":"POST","url":"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume","data":"{\"credit_id\":\"c\",\"redeem_request_id\":\"r\"}"}`
+		if status, _ = request("POST", "/v0/management/api-call", hub.Token, consume); status != 403 {
+			t.Fatal("hub redeemed without permission", status)
+		}
+		if status, _ = request("PATCH", "/api/keys/"+created.Key.ID, admin, `{"hubResets":true}`); status != 200 {
+			t.Fatal(status)
+		}
+		if status, _ = request("POST", "/v0/management/api-call", hub.Token, consume); status == 403 {
+			t.Fatal("hub reset permission ignored")
+		}
+		status, b = request("GET", "/api/state", admin, "")
+		if status != 200 || strings.Contains(string(b), "hubHash") || !strings.Contains(string(b), `"hasHubKey":true`) {
+			t.Fatalf("state exposed hub digest or missed flag: %d", status)
+		}
+		if status, _ = request("GET", "/api/state", hub.Token, ""); status != 401 {
+			t.Fatal("per-key hub key became dashboard admin")
+		}
+		if status, _ = request("DELETE", "/api/keys/"+created.Key.ID+"/hub-token", admin, ""); status != 200 {
+			t.Fatal(status)
+		}
+		if status, _ = request("GET", "/v0/management/auth-files", hub.Token, ""); status != 401 {
+			t.Fatal("revoked hub key still works", status)
+		}
+		request("DELETE", "/api/keys/"+created.Key.ID, admin, "")
+	})
 	makeKey := func(limit string) string {
 		t.Helper()
 		payload := fmt.Sprintf(`{"name":"Devices","dailyLimit":%s,"grants":[{"connectionId":"codex","accountIds":["account-b@example.com.json"],"models":[%q]}]}`, limit, model)
