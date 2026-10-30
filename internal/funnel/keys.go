@@ -32,6 +32,9 @@ func (a *App) keyHubToken(c *gin.Context, id string, issue bool) {
 		if issue && k.ArchivedAt != nil {
 			return fmt.Errorf("Restore this key before adding a hub key.")
 		}
+		if issue && k.ExpiresAt != nil && !k.ExpiresAt.After(now()) {
+			return fmt.Errorf("Extend this key's expiration before adding a hub key.")
+		}
 		k.HubHash = ""
 		if issue {
 			k.HubHash = digest(value)
@@ -92,11 +95,12 @@ func (a *App) updateKey(c *gin.Context, id string) {
 		ExpiresAt  json.RawMessage `json:"expiresAt"`
 		DailyLimit json.RawMessage `json:"dailyLimit"`
 		HubResets  *bool           `json:"hubResets"`
+		HubEmails  *bool           `json:"hubEmails"`
 	}
 	if !decode(c, &b) {
 		return
 	}
-	if b.Enabled == nil && b.Archived == nil && b.Name == nil && b.Grants == nil && b.ExpiresAt == nil && b.DailyLimit == nil && b.HubResets == nil {
+	if b.Enabled == nil && b.Archived == nil && b.Name == nil && b.Grants == nil && b.ExpiresAt == nil && b.DailyLimit == nil && b.HubResets == nil && b.HubEmails == nil {
 		fail(c, 400, "Supply key settings to update.")
 		return
 	}
@@ -121,6 +125,9 @@ func (a *App) updateKey(c *gin.Context, id string) {
 		if b.HubResets != nil {
 			k.HubResets = *b.HubResets
 		}
+		if b.HubEmails != nil {
+			k.HubEmails = *b.HubEmails
+		}
 		if b.Grants != nil {
 			k.Grants = *b.Grants
 		}
@@ -144,6 +151,8 @@ func (a *App) updateKey(c *gin.Context, id string) {
 					k.ArchivedAt = &t
 				}
 				k.Enabled = false
+				// Restoring a key must not silently revive a shared hub key.
+				k.HubHash = ""
 			} else if k.ArchivedAt != nil {
 				k.ArchivedAt = nil
 				k.Enabled = false

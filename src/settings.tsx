@@ -399,7 +399,7 @@ export function DashboardSettings({
               description={
                 settings?.hasHubKey
                   ? "Replacing the key disconnects existing usage hubs until you update them."
-                  : "Lets a usage hub, such as T3 Code's CLIProxyAPI hub, read usage from this dashboard."
+                  : "Lets a usage hub, such as T3 Code's CLIProxyAPI hub, read live usage for every account and redeem banked resets."
               }
             >
               <Button

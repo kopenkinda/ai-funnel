@@ -66,6 +66,7 @@ export interface PublicKey {
   requestsToday: number;
   hasHubKey?: boolean;
   hubResets?: boolean;
+  hubEmails?: boolean;
 }
 export interface RequestLog {
   id: string;

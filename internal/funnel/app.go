@@ -429,6 +429,7 @@ func (a *App) dashboard(c *gin.Context) {
 					k.ArchivedAt = &t
 				}
 				k.Enabled = false
+				k.HubHash = ""
 				d.Keys[k.ID] = k
 				return nil
 			}) {
