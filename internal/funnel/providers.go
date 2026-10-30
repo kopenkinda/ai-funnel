@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/openai"
+	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/httptransport"
 )
 
@@ -49,6 +50,10 @@ type Snapshot struct {
 	At           time.Time     `json:"at"`
 	Error        string        `json:"error"`
 	ResetCredits *ResetCredits `json:"resetCredits,omitempty"`
+	// Hub is the sanitized usage body served to per-key usage hubs.
+	Hub json.RawMessage `json:"hub,omitempty"`
+	// Started orders overlapping refreshes. At is kept from the last success.
+	Started time.Time `json:"started,omitempty"`
 }
 
 func (a *App) accountProviders() map[string]string {
@@ -193,75 +198,91 @@ func parseQuota(label string, window map[string]any, percentField, resetField st
 func object(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func (a *App) refresh(ctx context.Context, conn Connection) {
 	for _, auth := range a.core.List() {
-		if auth.Provider != conn.Provider {
-			continue
+		if auth.Provider == conn.Provider {
+			a.refreshAccount(ctx, conn, auth)
 		}
-		previous := a.store.read().Snapshots[auth.ID]
-		snap := Snapshot{At: now(), Quotas: []Quota{}, Plan: previous.Plan, PlanTier: previous.PlanTier}
-		target := "https://chatgpt.com/backend-api/wham/usage"
-		if conn.Provider == "claude" {
-			target = claudeUsageURL
-		}
-		requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		r, _ := http.NewRequestWithContext(requestCtx, "GET", target, nil)
-		if conn.Provider == "claude" {
-			r.Header.Set("anthropic-beta", "oauth-2025-04-20")
-		}
-		response, e := a.core.HttpRequest(requestCtx, auth, r)
-		if e == nil {
-			var data map[string]any
-			if response.StatusCode == 200 {
-				e = json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&data)
-			} else {
-				e = fmt.Errorf("quota lookup failed")
-			}
-			response.Body.Close()
-			if e == nil {
-				if conn.Provider == "codex" {
-					if plan := str(data["plan_type"]); plan != "" {
-						snap.Plan = plan
-					}
-				}
-				snap.Quotas, snap.ResetCredits = parseUsage(conn.Provider, data, snap.At)
-				if conn.Provider == "claude" {
-					var resetErr error
-					snap.ResetCredits, resetErr = parseClaudeCredits(data, snap.At)
-					if resetErr != nil {
-						snap.ResetCredits = claudeCreditsUnavailable(a.store.read().Snapshots[auth.ID].ResetCredits)
-					}
-				}
-			}
-		}
-		cancel()
-		if e != nil {
-			snap.Error = "Quota lookup unavailable. Retry refresh later."
-			old := a.store.read().Snapshots[auth.ID]
-			snap.Quotas = old.Quotas
-			snap.ResetCredits = old.ResetCredits
-			snap.At = old.At
-		}
-		if conn.Provider == "codex" && !auth.Disabled {
-			snap.ResetCredits = a.fetchCredits(ctx, auth, snap.ResetCredits)
-		}
-		if conn.Provider == "claude" && !auth.Disabled {
-			status, body, err := a.accountRequest(ctx, auth, "GET", "https://api.anthropic.com/api/oauth/profile", nil)
-			var profile struct {
-				Organization struct {
-					Type string `json:"organization_type"`
-					Tier string `json:"rate_limit_tier"`
-				} `json:"organization"`
-			}
-			if err == nil && status == 200 && json.Unmarshal(body, &profile) == nil {
-				if profile.Organization.Type != "" {
-					snap.Plan = profile.Organization.Type
-					snap.PlanTier = profile.Organization.Tier
-				} else if profile.Organization.Tier != "" {
-					snap.PlanTier = profile.Organization.Tier
-				}
-			}
-		}
-		_ = a.store.change(func(d *diskState) error { d.Snapshots[auth.ID] = snap; return nil })
 	}
+}
+
+func (a *App) refreshAccount(ctx context.Context, conn Connection, auth *core.Auth) {
+	previous := a.store.read().Snapshots[auth.ID]
+	started := now()
+	snap := Snapshot{At: started, Started: started, Quotas: []Quota{}, Plan: previous.Plan, PlanTier: previous.PlanTier}
+	target := "https://chatgpt.com/backend-api/wham/usage"
+	if conn.Provider == "claude" {
+		target = claudeUsageURL
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	r, _ := http.NewRequestWithContext(requestCtx, "GET", target, nil)
+	providerHeaders(r, auth)
+	response, e := a.core.HttpRequest(requestCtx, auth, r)
+	if e == nil {
+		var data map[string]any
+		if response.StatusCode == 200 {
+			e = json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&data)
+		} else {
+			e = fmt.Errorf("quota lookup failed")
+		}
+		response.Body.Close()
+		if e == nil {
+			if conn.Provider == "codex" {
+				if plan := str(data["plan_type"]); plan != "" {
+					snap.Plan = plan
+				}
+			}
+			snap.Quotas, snap.ResetCredits = parseUsage(conn.Provider, data, snap.At)
+			snap.Hub = hubBody(conn.Provider, data, snap.At)
+			if conn.Provider == "claude" {
+				var resetErr error
+				snap.ResetCredits, resetErr = parseClaudeCredits(data, snap.At)
+				if resetErr != nil {
+					snap.ResetCredits = claudeCreditsUnavailable(a.store.read().Snapshots[auth.ID].ResetCredits)
+				}
+			}
+		}
+	}
+	cancel()
+	if e != nil && ctx.Err() != nil {
+		// A cancelled caller says nothing about the provider; keep what's stored.
+		return
+	}
+	if e != nil {
+		snap.Error = "Quota lookup unavailable. Retry refresh later."
+		old := a.store.read().Snapshots[auth.ID]
+		snap.Quotas = old.Quotas
+		snap.ResetCredits = old.ResetCredits
+		snap.Hub = old.Hub
+		snap.At = old.At
+	}
+	if conn.Provider == "codex" && !auth.Disabled {
+		snap.ResetCredits = a.fetchCredits(ctx, auth, snap.ResetCredits)
+	}
+	if conn.Provider == "claude" && !auth.Disabled {
+		status, body, err := a.accountRequest(ctx, auth, "GET", "https://api.anthropic.com/api/oauth/profile", nil)
+		var profile struct {
+			Organization struct {
+				Type string `json:"organization_type"`
+				Tier string `json:"rate_limit_tier"`
+			} `json:"organization"`
+		}
+		if err == nil && status == 200 && json.Unmarshal(body, &profile) == nil {
+			if profile.Organization.Type != "" {
+				snap.Plan = profile.Organization.Type
+				snap.PlanTier = profile.Organization.Tier
+			} else if profile.Organization.Tier != "" {
+				snap.PlanTier = profile.Organization.Tier
+			}
+		}
+	}
+	// Refreshes can overlap. One that started earlier must not overwrite a
+	// newer snapshot, such as the one taken right after a hub redemption.
+	_ = a.store.change(func(d *diskState) error {
+		if d.Snapshots[auth.ID].Started.After(snap.Started) {
+			return nil
+		}
+		d.Snapshots[auth.ID] = snap
+		return nil
+	})
 }
 func allowedPath(p, path, method string) bool {
 	if p != "codex" && p != "claude" {

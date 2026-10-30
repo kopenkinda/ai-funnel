@@ -52,6 +52,14 @@ This is a subscription cutoff, not a spending cap. Requests already in flight an
 
 In **Settings**, generate a hub key. In T3 Code, add a CLIProxyAPI hub with the service's root URL and that management key. Replacing the key invalidates the old one.
 
-To share usage for one client key only, open the key under **API keys** and choose **Generate hub key** in its **Usage hub** section. That hub key lists only the accounts the client key may route to. It can't send inference requests or open the dashboard. Banked Codex resets can only be redeemed through it after you turn on **Allow reset redemption**. Revoking or replacing a per-key hub key leaves the client key working. Archived or expired keys can't use their hub keys.
+To share usage for one client key only, open the key under **API keys** and choose **Generate hub key** in its **Usage hub** section. A per-key hub key:
 
-The hub exposes `/v0/management/auth-files` and a scoped `/v0/management/api-call` for the official Codex and Claude usage endpoints and Codex reset-credit operations. It does not expose raw SDK management, credentials or arbitrary outbound requests.
+- lists only the accounts assigned by the key's grants, under opaque IDs, and skips paused accounts;
+- labels accounts as `Codex account 1a2b3c` unless **Show account emails** is on, and never shares ChatGPT workspace IDs;
+- serves the funnel's cached usage snapshots, reduced to the quota windows T3 Code reads, so it never makes provider calls for reads;
+- lists and redeems banked Codex resets only with **Allow reset redemption** on, while the key and its connection are active;
+- keeps showing usage while the key is paused, stops working when the key expires or is archived, and is cleared on archive.
+
+The global hub key in **Settings** sees every account with live provider reads and can redeem resets on any running connection.
+
+The hub exposes `/v0/management/auth-files`, `/v0/management/reset-quota` and a scoped `/v0/management/api-call` for the official Codex and Claude usage endpoints and Codex reset-credit operations. It does not expose raw SDK management, credentials or arbitrary outbound requests.

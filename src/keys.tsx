@@ -292,6 +292,22 @@ export function KeyManager({
   );
 }
 
+type HubSetting = "hubResets" | "hubEmails";
+const hubSettings: { id: HubSetting; label: string; description: string }[] = [
+  {
+    id: "hubEmails",
+    label: "Show account emails",
+    description:
+      "Off: accounts appear as Codex account 1a2b3c and similar labels.",
+  },
+  {
+    id: "hubResets",
+    label: "Allow reset redemption",
+    description:
+      "Lets the hub redeem banked Codex resets while this key and its connection are active.",
+  },
+];
+
 function KeyHubAccess({
   clientKey,
   origin,
@@ -306,14 +322,21 @@ function KeyHubAccess({
   const [error, setError] = useState("");
   // Mirror saved values locally so a failed refresh can't show a stale setting.
   const [hasKey, setHasKey] = useState(clientKey.hasHubKey ?? false);
-  const [resets, setResets] = useState(clientKey.hubResets ?? false);
+  const [saved, setSaved] = useState({
+    hubResets: clientKey.hubResets ?? false,
+    hubEmails: clientKey.hubEmails ?? false,
+  });
   useEffect(
     () => setHasKey(clientKey.hasHubKey ?? false),
     [clientKey.hasHubKey],
   );
   useEffect(
-    () => setResets(clientKey.hubResets ?? false),
-    [clientKey.hubResets],
+    () =>
+      setSaved({
+        hubResets: clientKey.hubResets ?? false,
+        hubEmails: clientKey.hubEmails ?? false,
+      }),
+    [clientKey.hubResets, clientKey.hubEmails],
   );
   async function run(task: () => Promise<void>) {
     setBusy(true);
@@ -328,6 +351,8 @@ function KeyHubAccess({
     }
   }
   const path = `/keys/${clientKey.id}/hub-token`;
+  const expired =
+    !!clientKey.expiresAt && Date.parse(clientKey.expiresAt) <= Date.now();
   return (
     <section
       aria-label="Usage hub"
@@ -336,9 +361,9 @@ function KeyHubAccess({
       <div className="flex flex-col gap-1">
         <h3 className="text-sm font-medium">Usage hub</h3>
         <p className="text-sm text-muted-foreground">
-          A read-only management key for a CLIProxyAPI usage hub, such as T3
-          Code. It lists only the accounts this key can use and can't send
-          requests.
+          A management key for a CLIProxyAPI usage hub, such as T3 Code. It
+          shows cached quota for the accounts assigned to this key and can't
+          send requests. Usage stays visible while the key is paused.
         </p>
       </div>
       {error && <ErrorMessage>{error}</ErrorMessage>}
@@ -368,11 +393,16 @@ function KeyHubAccess({
           </FieldDescription>
         </div>
       )}
+      {expired && (
+        <FieldDescription>
+          This key has expired. Extend its expiration to use a hub key.
+        </FieldDescription>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button
           variant="outline"
           size="sm"
-          disabled={busy}
+          disabled={busy || expired}
           onClick={() =>
             void run(async () => {
               setToken((await api<{ token: string }>(path, "POST")).token);
@@ -399,31 +429,37 @@ function KeyHubAccess({
           </Button>
         )}
       </div>
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <FieldLabel htmlFor={`hub-resets-${clientKey.id}`}>
-            Allow reset redemption
-          </FieldLabel>
-          <FieldDescription>
-            Lets the hub redeem banked Codex resets on this key's accounts.
-          </FieldDescription>
+      {hubSettings.map((setting) => (
+        <div
+          key={setting.id}
+          className="flex items-start justify-between gap-4"
+        >
+          <div className="flex flex-col gap-1">
+            <FieldLabel htmlFor={`${setting.id}-${clientKey.id}`}>
+              {setting.label}
+            </FieldLabel>
+            <FieldDescription>{setting.description}</FieldDescription>
+          </div>
+          <Switch
+            id={`${setting.id}-${clientKey.id}`}
+            checked={saved[setting.id]}
+            disabled={busy}
+            onCheckedChange={(checked) =>
+              void run(async () => {
+                const key = await api<PublicKey>(
+                  `/keys/${clientKey.id}`,
+                  "PATCH",
+                  { [setting.id]: checked },
+                );
+                setSaved((prev) => ({
+                  ...prev,
+                  [setting.id]: key[setting.id] ?? false,
+                }));
+              })
+            }
+          />
         </div>
-        <Switch
-          id={`hub-resets-${clientKey.id}`}
-          checked={resets}
-          disabled={busy}
-          onCheckedChange={(checked) =>
-            void run(async () => {
-              const saved = await api<PublicKey>(
-                `/keys/${clientKey.id}`,
-                "PATCH",
-                { hubResets: checked },
-              );
-              setResets(saved.hubResets ?? false);
-            })
-          }
-        />
-      </div>
+      ))}
     </section>
   );
 }

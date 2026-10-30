@@ -274,7 +274,7 @@ func TestEmbeddedService(t *testing.T) {
 			model = m
 		}
 	}
-	t.Run("per-key usage hub sees only the key's accounts", func(t *testing.T) {
+	t.Run("per-key usage hub serves cached, scoped data", func(t *testing.T) {
 		status, b := request("POST", "/api/keys", admin, `{"name":"Hub scoped","grants":[{"connectionId":"codex","accountIds":["account-a"],"models":null}]}`)
 		if status != 201 {
 			t.Fatalf("key %d %s", status, b)
@@ -283,50 +283,174 @@ func TestEmbeddedService(t *testing.T) {
 			Key Key `json:"key"`
 		}
 		_ = json.Unmarshal(b, &created)
-		status, b = request("POST", "/api/keys/"+created.Key.ID+"/hub-token", admin, "")
-		if status != 201 {
-			t.Fatalf("hub token %d %s", status, b)
+		keyPath := "/api/keys/" + created.Key.ID
+		issue := func() string {
+			t.Helper()
+			status, b := request("POST", keyPath+"/hub-token", admin, "")
+			if status != 201 {
+				t.Fatalf("hub token %d %s", status, b)
+			}
+			var hub struct {
+				Token string `json:"token"`
+			}
+			_ = json.Unmarshal(b, &hub)
+			return hub.Token
 		}
-		var hub struct {
-			Token string `json:"token"`
+		token := issue()
+		type file struct {
+			ID      string         `json:"id"`
+			Email   string         `json:"email"`
+			IDToken map[string]any `json:"id_token"`
 		}
-		_ = json.Unmarshal(b, &hub)
-		status, b = request("GET", "/v0/management/auth-files", hub.Token, "")
-		if status != 200 || !strings.Contains(string(b), `"account-a"`) || strings.Contains(string(b), "account-b") || strings.Contains(string(b), "account-c") {
-			t.Fatalf("hub inventory not scoped %d %s", status, b)
+		files := func() []file {
+			t.Helper()
+			status, b := request("GET", "/v0/management/auth-files", token, "")
+			if status != 200 || strings.Contains(string(b), "account-") || strings.Contains(string(b), "chatgpt_account_id") {
+				t.Fatalf("hub inventory leaked identity %d %s", status, b)
+			}
+			var out struct {
+				Files []file `json:"files"`
+			}
+			_ = json.Unmarshal(b, &out)
+			return out.Files
 		}
-		status, _ = request("POST", "/v0/management/api-call", hub.Token, `{"auth_index":"account-b@example.com.json","method":"GET","url":"https://chatgpt.com/backend-api/wham/usage"}`)
-		if status != 404 {
-			t.Fatal("hub read an account outside the key", status)
+		list := files()
+		if len(list) != 1 || !strings.HasPrefix(list[0].ID, "acct-") || !strings.HasPrefix(list[0].Email, "Codex account ") {
+			t.Fatalf("hub inventory not scoped: %+v", list)
 		}
-		status, _ = request("POST", "/v0/management/api-call", hub.Token, `{"auth_index":"account-a","method":"GET","url":"https://chatgpt.com/backend-api/wham/usage"}`)
-		if status != 200 {
-			t.Fatal("hub could not read its account", status)
+		index := list[0].ID
+		call := func(index, method, url, data string) (int, int, string) {
+			t.Helper()
+			payload, _ := json.Marshal(map[string]string{"auth_index": index, "method": method, "url": url, "data": data})
+			status, b := request("POST", "/v0/management/api-call", token, string(payload))
+			var out struct {
+				StatusCode int    `json:"status_code"`
+				Body       string `json:"body"`
+			}
+			_ = json.Unmarshal(b, &out)
+			return status, out.StatusCode, out.Body
 		}
-		consume := `{"auth_index":"account-a","method":"POST","url":"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume","data":"{\"credit_id\":\"c\",\"redeem_request_id\":\"r\"}"}`
-		if status, _ = request("POST", "/v0/management/api-call", hub.Token, consume); status != 403 {
+		const usage = "https://chatgpt.com/backend-api/wham/usage"
+		const credits = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+		if status, upstream, _ := call(index, "GET", usage, ""); status != 200 || upstream != 503 {
+			t.Fatalf("uncached usage %d/%d", status, upstream)
+		}
+		var raw map[string]any
+		_ = json.Unmarshal([]byte(`{"user_id":"user-secret","email":"a@example.com","plan_type":"plus","rate_limit":{"primary_window":{"used_percent":40,"reset_after_seconds":60,"limit_window_seconds":18000}}}`), &raw)
+		expiry := now().Add(time.Hour)
+		if err := store.change(func(d *diskState) error {
+			snap := d.Snapshots["account-a"]
+			snap.Hub, snap.At, snap.Error = hubBody("codex", raw, now()), now(), ""
+			snap.ResetCredits = &ResetCredits{CheckedAt: &expiry, Items: []ResetCredit{{ID: "hub-test-credit", Status: "available", ResetType: "codex_rate_limits", ExpiresAt: &expiry}}}
+			d.Snapshots["account-a"] = snap
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		status, upstream, body := call(index, "GET", usage, "")
+		if status != 200 || upstream != 200 || !strings.Contains(body, `"used_percent":40`) || !strings.Contains(body, "reset_at") || strings.Contains(body, "user-secret") || strings.Contains(body, "example.com") {
+			t.Fatalf("cached usage %d/%d %s", status, upstream, body)
+		}
+		for _, other := range []string{"account-a", "account-b@example.com.json"} {
+			if status, _, _ := call(other, "GET", usage, ""); status != 404 {
+				t.Fatalf("hub resolved raw account %s: %d", other, status)
+			}
+		}
+		consume := `{"credit_id":"hub-test-credit","redeem_request_id":"r"}`
+		if _, upstream, _ := call(index, "GET", credits, ""); upstream != 403 {
+			t.Fatal("credits listed without redeem permission", upstream)
+		}
+		if status, _, _ := call(index, "POST", credits+"/consume", consume); status != 403 {
 			t.Fatal("hub redeemed without permission", status)
 		}
-		if status, _ = request("PATCH", "/api/keys/"+created.Key.ID, admin, `{"hubResets":true}`); status != 200 {
+		if status, _ = request("PATCH", keyPath, admin, `{"hubResets":true}`); status != 200 {
 			t.Fatal(status)
 		}
-		if status, _ = request("POST", "/v0/management/api-call", hub.Token, consume); status == 403 {
-			t.Fatal("hub reset permission ignored")
+		if _, upstream, body := call(index, "GET", credits, ""); upstream != 200 || !strings.Contains(body, "hub-test-credit") {
+			t.Fatal("credits hidden with redeem permission", upstream, body)
+		}
+		capture.mu.Lock()
+		capture.creditUsage = map[string]string{"account-a": `{"code":"already_redeemed"}`}
+		capture.mu.Unlock()
+		status, upstream, body = call(index, "POST", credits+"/consume", consume)
+		capture.mu.Lock()
+		capture.creditUsage = nil
+		capture.mu.Unlock()
+		if status != 200 || upstream != 200 || body != `{"code":"already_redeemed"}` {
+			t.Fatalf("hub redeem %d/%d %s", status, upstream, body)
+		}
+		if status, _ = request("POST", "/v0/management/reset-quota", token, fmt.Sprintf(`{"auth_index":%q}`, index)); status != 200 {
+			t.Fatal("reset-quota acknowledgement", status)
+		}
+		if err := store.change(func(d *diskState) error {
+			snap := d.Snapshots["account-a"]
+			snap.Error = "Quota lookup unavailable. Retry refresh later."
+			d.Snapshots["account-a"] = snap
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, upstream, _ := call(index, "GET", usage, ""); upstream != 503 {
+			t.Fatal("failed refresh served as fresh usage", upstream)
+		}
+		// A refresh that started before the stored snapshot must not replace it.
+		before := store.read().Snapshots["account-a"]
+		_ = store.change(func(d *diskState) error {
+			snap := d.Snapshots["account-a"]
+			snap.Started, snap.Hub = now().Add(time.Hour), json.RawMessage(`{"marker":true}`)
+			d.Snapshots["account-a"] = snap
+			return nil
+		})
+		latest, _ := app.core.GetByID("account-a")
+		app.refreshAccount(context.Background(), store.read().Connections["codex"], latest)
+		if snap := store.read().Snapshots["account-a"]; string(snap.Hub) != `{"marker":true}` {
+			t.Fatalf("older refresh overwrote a newer snapshot: %s", snap.Hub)
+		}
+		_ = store.change(func(d *diskState) error { d.Snapshots["account-a"] = before; return nil })
+		_ = store.change(func(d *diskState) error {
+			snap := d.Snapshots["account-a"]
+			snap.Error = ""
+			d.Snapshots["account-a"] = snap
+			return nil
+		})
+		if status, _ = request("PATCH", keyPath, admin, `{"enabled":false}`); status != 200 {
+			t.Fatal(status)
+		}
+		if _, upstream, _ := call(index, "GET", usage, ""); upstream != 200 {
+			t.Fatal("paused key lost usage", upstream)
+		}
+		if _, upstream, _ := call(index, "GET", credits, ""); upstream != 403 {
+			t.Fatal("paused key listed credits", upstream)
+		}
+		if status, _, _ := call(index, "POST", credits+"/consume", consume); status != 403 {
+			t.Fatal("paused key redeemed", status)
+		}
+		if status, _ = request("PATCH", keyPath, admin, `{"hubEmails":true}`); status != 200 {
+			t.Fatal(status)
+		}
+		if status, b := request("GET", "/v0/management/auth-files", token, ""); status != 200 || !strings.Contains(string(b), "account-a@example.com") || strings.Contains(string(b), "account-b") {
+			t.Fatalf("hub emails %d %s", status, b)
 		}
 		status, b = request("GET", "/api/state", admin, "")
 		if status != 200 || strings.Contains(string(b), "hubHash") || !strings.Contains(string(b), `"hasHubKey":true`) {
 			t.Fatalf("state exposed hub digest or missed flag: %d", status)
 		}
-		if status, _ = request("GET", "/api/state", hub.Token, ""); status != 401 {
+		if status, _ = request("GET", "/api/state", token, ""); status != 401 {
 			t.Fatal("per-key hub key became dashboard admin")
 		}
-		if status, _ = request("DELETE", "/api/keys/"+created.Key.ID+"/hub-token", admin, ""); status != 200 {
+		if status, _ = request("DELETE", keyPath+"/hub-token", admin, ""); status != 200 {
 			t.Fatal(status)
 		}
-		if status, _ = request("GET", "/v0/management/auth-files", hub.Token, ""); status != 401 {
+		if status, _ = request("GET", "/v0/management/auth-files", token, ""); status != 401 {
 			t.Fatal("revoked hub key still works", status)
 		}
-		request("DELETE", "/api/keys/"+created.Key.ID, admin, "")
+		token = issue()
+		request("DELETE", keyPath, admin, "")
+		request("PATCH", keyPath, admin, `{"archived":false}`)
+		if status, _ = request("GET", "/v0/management/auth-files", token, ""); status != 401 {
+			t.Fatal("restoring a key revived its hub key", status)
+		}
+		request("DELETE", keyPath, admin, "")
 	})
 	makeKey := func(limit string) string {
 		t.Helper()

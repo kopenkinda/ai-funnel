@@ -39,6 +39,7 @@ type Key struct {
 	RequestsToday int        `json:"requestsToday"`
 	HubHash       string     `json:"hubHash,omitempty"`
 	HubResets     bool       `json:"hubResets,omitempty"`
+	HubEmails     bool       `json:"hubEmails,omitempty"`
 	HasHubKey     bool       `json:"hasHubKey,omitempty"`
 }
 type Connection struct {
