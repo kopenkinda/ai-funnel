@@ -9,6 +9,52 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// public drops both secret digests before a key leaves the dashboard API.
+func (k Key) public() Key {
+	k.HasHubKey = k.HubHash != ""
+	k.Hash, k.HubHash = "", ""
+	return k
+}
+
+// keyHubToken issues or revokes a usage hub key limited to one client key's accounts.
+func (a *App) keyHubToken(c *gin.Context, id string, issue bool) {
+	value := ""
+	if issue {
+		value = "sk-hub-" + token()
+	}
+	status := 400
+	err := a.store.change(func(d *diskState) error {
+		k, ok := d.Keys[id]
+		if !ok {
+			status = 404
+			return fmt.Errorf("Key not found.")
+		}
+		if issue && k.ArchivedAt != nil {
+			return fmt.Errorf("Restore this key before adding a hub key.")
+		}
+		k.HubHash = ""
+		if issue {
+			k.HubHash = digest(value)
+		}
+		d.Keys[id] = k
+		status = 500
+		return nil
+	})
+	if err != nil {
+		if status == 500 {
+			fail(c, 500, "Could not save key settings.")
+		} else {
+			fail(c, status, err.Error())
+		}
+		return
+	}
+	if issue {
+		c.JSON(201, gin.H{"token": value})
+	} else {
+		c.JSON(200, gin.H{"revoked": true})
+	}
+}
+
 func validateKey(k Key, connections map[string]Connection, accounts map[string]string) error {
 	if strings.TrimSpace(k.Name) == "" || len(k.Name) > 80 || len(k.Grants) == 0 || len(k.Grants) > 30 || (k.DailyLimit != nil && *k.DailyLimit < 1) {
 		return fmt.Errorf("Supply a name, provider access, and a valid request limit.")
@@ -45,11 +91,12 @@ func (a *App) updateKey(c *gin.Context, id string) {
 		Grants     *[]Grant        `json:"grants"`
 		ExpiresAt  json.RawMessage `json:"expiresAt"`
 		DailyLimit json.RawMessage `json:"dailyLimit"`
+		HubResets  *bool           `json:"hubResets"`
 	}
 	if !decode(c, &b) {
 		return
 	}
-	if b.Enabled == nil && b.Archived == nil && b.Name == nil && b.Grants == nil && b.ExpiresAt == nil && b.DailyLimit == nil {
+	if b.Enabled == nil && b.Archived == nil && b.Name == nil && b.Grants == nil && b.ExpiresAt == nil && b.DailyLimit == nil && b.HubResets == nil {
 		fail(c, 400, "Supply key settings to update.")
 		return
 	}
@@ -70,6 +117,9 @@ func (a *App) updateKey(c *gin.Context, id string) {
 		}
 		if b.Name != nil {
 			k.Name = *b.Name
+		}
+		if b.HubResets != nil {
+			k.HubResets = *b.HubResets
 		}
 		if b.Grants != nil {
 			k.Grants = *b.Grants
@@ -118,8 +168,7 @@ func (a *App) updateKey(c *gin.Context, id string) {
 		}
 		return
 	}
-	updated.Hash = ""
-	c.JSON(200, updated)
+	c.JSON(200, updated.public())
 }
 
 func (a *App) createKey(c *gin.Context) {
@@ -160,7 +209,7 @@ func (a *App) createKey(c *gin.Context) {
 	}) {
 		return
 	}
-	k.Hash = ""
+	k = k.public()
 	var shown any = value
 	if b.Existing != "" {
 		shown = nil

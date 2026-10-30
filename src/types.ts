@@ -64,6 +64,8 @@ export interface PublicKey {
   createdAt: string;
   lastUsedAt: string | null;
   requestsToday: number;
+  hasHubKey?: boolean;
+  hubResets?: boolean;
 }
 export interface RequestLog {
   id: string;

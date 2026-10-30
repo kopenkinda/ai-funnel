@@ -363,7 +363,7 @@ export function DashboardSettings({
             <Switch id="hour12" checked={hour12} onCheckedChange={setHour12} />
           </Row>
         </Section>
-        <Section title="T3 Code usage hub">
+        <Section title="Usage hub">
           <div className="flex flex-col gap-2 p-4">
             <FieldLabel htmlFor="hub-url">Hub URL</FieldLabel>
             <div className="flex gap-2">
@@ -399,7 +399,7 @@ export function DashboardSettings({
               description={
                 settings?.hasHubKey
                   ? "Replacing the key disconnects existing usage hubs until you update them."
-                  : "Lets a T3 Code usage hub read usage from this dashboard."
+                  : "Lets a usage hub, such as T3 Code's CLIProxyAPI hub, read usage from this dashboard."
               }
             >
               <Button

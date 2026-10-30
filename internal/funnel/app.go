@@ -406,6 +406,10 @@ func (a *App) dashboard(c *gin.Context) {
 		a.createKey(c)
 		return
 	}
+	if len(parts) == 3 && parts[0] == "keys" && parts[2] == "hub-token" && (m == "POST" || m == "DELETE") {
+		a.keyHubToken(c, parts[1], m == "POST")
+		return
+	}
 	if len(parts) == 2 && parts[0] == "keys" {
 		if m == "PATCH" {
 			a.updateKey(c, parts[1])
@@ -454,7 +458,7 @@ func (a *App) state(c *gin.Context) {
 	})
 	keys := []Key{}
 	for _, k := range d.Keys {
-		k.Hash = ""
+		k = k.public()
 		k.RequestsToday = d.Usage[usageID(k.ID)]
 		keys = append(keys, k)
 	}

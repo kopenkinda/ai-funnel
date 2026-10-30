@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useHourCycle } from "./preferences.ts";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
 import {
@@ -10,10 +10,10 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { PublicConnection, PublicKey, UsageTotals } from "./types";
 import { providerNames } from "./types";
-import { relative } from "./api";
+import { api, relative } from "./api";
 import { KeyForm } from "./forms";
 import { PrivateText } from "./privacy";
-import { ProviderIcon } from "./ui";
+import { CopyButton, ErrorMessage, ProviderIcon } from "./ui";
 import { compact, costLabel, money } from "./metrics";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 
 const date = (value: string) =>
   new Date(value).toLocaleDateString(undefined, {
@@ -48,6 +50,7 @@ const status = (key: PublicKey) =>
 export function KeyManager({
   keys,
   connections,
+  origin,
   busy,
   onAdd,
   onSaved,
@@ -57,6 +60,7 @@ export function KeyManager({
 }: {
   keys: PublicKey[];
   connections: PublicConnection[];
+  origin: string;
   busy: boolean;
   onAdd: () => void;
   onSaved: () => Promise<void>;
@@ -266,6 +270,14 @@ export function KeyManager({
               onSaved={onSaved}
             />
           </div>
+          {!selected.archivedAt && (
+            <KeyHubAccess
+              key={selected.id}
+              clientKey={selected}
+              origin={origin}
+              onSaved={onSaved}
+            />
+          )}
         </div>
       ) : (
         <Empty className="min-h-48">
@@ -276,6 +288,142 @@ export function KeyManager({
           </EmptyHeader>
         </Empty>
       )}
+    </section>
+  );
+}
+
+function KeyHubAccess({
+  clientKey,
+  origin,
+  onSaved,
+}: {
+  clientKey: PublicKey;
+  origin: string;
+  onSaved: () => Promise<void>;
+}) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  // Mirror saved values locally so a failed refresh can't show a stale setting.
+  const [hasKey, setHasKey] = useState(clientKey.hasHubKey ?? false);
+  const [resets, setResets] = useState(clientKey.hubResets ?? false);
+  useEffect(
+    () => setHasKey(clientKey.hasHubKey ?? false),
+    [clientKey.hasHubKey],
+  );
+  useEffect(
+    () => setResets(clientKey.hubResets ?? false),
+    [clientKey.hubResets],
+  );
+  async function run(task: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try {
+      await task();
+      await onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const path = `/keys/${clientKey.id}/hub-token`;
+  return (
+    <section
+      aria-label="Usage hub"
+      className="flex flex-col gap-4 border-t px-5 py-6 sm:px-7"
+    >
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-medium">Usage hub</h3>
+        <p className="text-sm text-muted-foreground">
+          A read-only management key for a CLIProxyAPI usage hub, such as T3
+          Code. It lists only the accounts this key can use and can't send
+          requests.
+        </p>
+      </div>
+      {error && <ErrorMessage>{error}</ErrorMessage>}
+      <div className="flex flex-col gap-2">
+        <FieldLabel htmlFor={`hub-url-${clientKey.id}`}>Hub URL</FieldLabel>
+        <div className="flex gap-2">
+          <Input id={`hub-url-${clientKey.id}`} readOnly value={origin} />
+          <CopyButton value={origin} onError={setError} />
+        </div>
+      </div>
+      {token && (
+        <div className="flex flex-col gap-2">
+          <FieldLabel htmlFor={`hub-key-${clientKey.id}`}>
+            Management key
+          </FieldLabel>
+          <div className="flex gap-2">
+            <Input
+              id={`hub-key-${clientKey.id}`}
+              readOnly
+              type="password"
+              value={token}
+            />
+            <CopyButton value={token} onError={setError} />
+          </div>
+          <FieldDescription>
+            Copy the key now. It isn't shown again.
+          </FieldDescription>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              setToken((await api<{ token: string }>(path, "POST")).token);
+              setHasKey(true);
+            })
+          }
+        >
+          {hasKey ? "Replace hub key" : "Generate hub key"}
+        </Button>
+        {hasKey && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await api(path, "DELETE");
+                setToken("");
+                setHasKey(false);
+              })
+            }
+          >
+            Revoke
+          </Button>
+        )}
+      </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <FieldLabel htmlFor={`hub-resets-${clientKey.id}`}>
+            Allow reset redemption
+          </FieldLabel>
+          <FieldDescription>
+            Lets the hub redeem banked Codex resets on this key's accounts.
+          </FieldDescription>
+        </div>
+        <Switch
+          id={`hub-resets-${clientKey.id}`}
+          checked={resets}
+          disabled={busy}
+          onCheckedChange={(checked) =>
+            void run(async () => {
+              const saved = await api<PublicKey>(
+                `/keys/${clientKey.id}`,
+                "PATCH",
+                { hubResets: checked },
+              );
+              setResets(saved.hubResets ?? false);
+            })
+          }
+        />
+      </div>
     </section>
   );
 }

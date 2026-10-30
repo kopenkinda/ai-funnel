@@ -52,4 +52,6 @@ This is a subscription cutoff, not a spending cap. Requests already in flight an
 
 In **Settings**, generate a hub key. In T3 Code, add a CLIProxyAPI hub with the service's root URL and that management key. Replacing the key invalidates the old one.
 
+To share usage for one client key only, open the key under **API keys** and choose **Generate hub key** in its **Usage hub** section. That hub key lists only the accounts the client key may route to. It can't send inference requests or open the dashboard. Banked Codex resets can only be redeemed through it after you turn on **Allow reset redemption**. Revoking or replacing a per-key hub key leaves the client key working. Archived or expired keys can't use their hub keys.
+
 The hub exposes `/v0/management/auth-files` and a scoped `/v0/management/api-call` for the official Codex and Claude usage endpoints and Codex reset-credit operations. It does not expose raw SDK management, credentials or arbitrary outbound requests.
