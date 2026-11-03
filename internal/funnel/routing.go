@@ -74,7 +74,7 @@ type accountQuota struct {
 // Relative capacity matches the dashboard plan badges. Unknown plans count as 1.
 func planCapacity(provider, raw string) float64 {
 	plan := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(raw))
-	tiers := map[string]float64{"prolite": 10, "pro100": 10, "pro": 20, "pro200": 20, "promax": 20, "pro500": 20}
+	tiers := map[string]float64{"prolite": 10, "pro100": 10, "pro": 20, "pro200": 20, "promax": 40, "pro500": 40}
 	if provider == "claude" {
 		tiers = map[string]float64{"max5x": 5, "claudemax5x": 5, "defaultclaudemax5x": 5, "max20x": 20, "claudemax20x": 20, "defaultclaudemax20x": 20}
 	}

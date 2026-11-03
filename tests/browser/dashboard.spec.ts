@@ -914,9 +914,9 @@ test("account rows keep plans inline and only show exceptional statuses", async 
   await expect(
     codex.getByRole("img", { name: "Pro 200 · 20×", exact: true }),
   ).toBeVisible();
-  const pro500 = codex.getByRole("img", { name: "Pro 500 · 20×", exact: true });
+  const pro500 = codex.getByRole("img", { name: "Pro 500 · 40×", exact: true });
   await pro500.focus();
-  await expect(page.getByRole("tooltip")).toHaveText("Pro 500 · 20×");
+  await expect(page.getByRole("tooltip")).toHaveText("Pro 500 · 40×");
   await pro500.press("Escape");
   for (const status of [
     "Paused",

@@ -340,8 +340,8 @@ export function PlanBadge({
           pro100: ["Pro 100", 10],
           pro: ["Pro 200", 20],
           pro200: ["Pro 200", 20],
-          promax: ["Pro 500", 20],
-          pro500: ["Pro 500", 20],
+          promax: ["Pro 500", 40],
+          pro500: ["Pro 500", 40],
         }
       : {
           pro: ["Pro", 1],
