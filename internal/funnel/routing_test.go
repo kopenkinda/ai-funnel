@@ -85,7 +85,7 @@ func TestQuotaWindowsFollowModelPlanAndReset(t *testing.T) {
 		t.Fatalf("Claude model weekly limit ignored: %+v", q)
 	}
 	weekly := Snapshot{Quotas: []Quota{window("7d", 25, 2*24*time.Hour)}}
-	if q := quotaFor("codex", "gpt-5.4", weekly, &core.Auth{Metadata: map[string]any{"plan_type": "pro"}}, routingNow); q.primary != nil || q.primaryUsed() != 75 || q.secondaryUsed() != 75 || q.remaining() != 2.5 {
+	if q := quotaFor("codex", "gpt-5.4", weekly, &core.Auth{Metadata: map[string]any{"plan_type": "pro"}}, routingNow); q.primary != nil || q.primaryUsed() != 75 || q.secondaryUsed() != 75 || q.remaining() != 5 {
 		t.Fatalf("weekly-only plan: %+v", q)
 	}
 	if q := quotaFor("codex", "gpt-5.4", Snapshot{}, &core.Auth{}, routingNow); q.exhausted || q.remaining() != 1 {
@@ -107,8 +107,8 @@ func TestRoutingStrategies(t *testing.T) {
 		draw  float64
 		want  string
 	}{
-		// Weights: a 1x * 50% = 0.5, b 10x * 50% = 5, c 5x * 90% = 4.5.
-		{"capacity weighted draws by plan headroom", routeWith("capacity_weighted", func(r *Routing) { r.PreferEarlierReset = false }), 0.03, "a"},
+		// Weights: a 1x * 50% = 0.5, b 20x * 50% = 10, c 10x * 90% = 9.
+		{"capacity weighted draws by plan headroom", routeWith("capacity_weighted", func(r *Routing) { r.PreferEarlierReset = false }), 0.02, "a"},
 		{"capacity weighted favors larger plans", routeWith("capacity_weighted", func(r *Routing) { r.PreferEarlierReset = false }), 0.3, "b"},
 		{"capacity weighted keeps the earliest secondary reset", routeWith("capacity_weighted"), 0.99, "a"},
 		{"usage weighted uses lowest secondary", routeWith("usage_weighted", func(r *Routing) { r.PreferEarlierReset = false }), 0, "c"},

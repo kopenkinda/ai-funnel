@@ -26,8 +26,8 @@ Plan capacity follows the account badges:
 | Provider | Plan           | Capacity |
 | -------- | -------------- | -------- |
 | Codex    | Plus, Business | 1        |
-| Codex    | Pro 100        | 5        |
-| Codex    | Pro 200        | 10       |
+| Codex    | Pro 100        | 10       |
+| Codex    | Pro 200        | 20       |
 | Codex    | Pro 500        | 20       |
 | Claude   | Pro, Team      | 1        |
 | Claude   | Max 5x         | 5        |

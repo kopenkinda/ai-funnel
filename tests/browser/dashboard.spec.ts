@@ -909,10 +909,10 @@ test("account rows keep plans inline and only show exceptional statuses", async 
     codex.getByRole("img", { name: "Business · 1×", exact: true }),
   ).toBeVisible();
   await expect(
-    codex.getByRole("img", { name: "Pro 100 · 5×", exact: true }),
+    codex.getByRole("img", { name: "Pro 100 · 10×", exact: true }),
   ).toBeVisible();
   await expect(
-    codex.getByRole("img", { name: "Pro 200 · 10×", exact: true }),
+    codex.getByRole("img", { name: "Pro 200 · 20×", exact: true }),
   ).toBeVisible();
   const pro500 = codex.getByRole("img", { name: "Pro 500 · 20×", exact: true });
   await pro500.focus();
