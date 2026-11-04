@@ -8,9 +8,9 @@ Each provider keeps its native request and response format. Paths are relative t
 | OpenAI compatible | `/providers/codex/codex/v1`                |
 | Claude Code       | `/providers/claude/claude`                 |
 
-Authenticate with `Authorization: Bearer <client key>` or `x-api-key: <client key>`. **URL & setup** on each connection shows the full URLs and a client snippet.
+Authenticate with `Authorization: Bearer <client key>` or `x-api-key: <client key>`. **Manage → Setup** on each connection shows the full URLs and a client snippet.
 
-![Codex URL and setup dialog with account pause controls, base URL and config.toml snippet](screenshots/codex-setup.png)
+![Codex Manage dialog on the Setup tab with the base URL and config.toml snippet](screenshots/codex-setup.png)
 
 ## Endpoints and transports
 

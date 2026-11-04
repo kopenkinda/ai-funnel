@@ -14,9 +14,15 @@ Gemini, Vertex AI, Grok and the other CLIProxyAPI providers appear under **Unsup
 
 ## Quotas
 
-**URL & setup** on a connection lists its accounts, lets you pause or resume each one, and shows the base URL and client configuration. **Refresh** reads quotas from each provider, and background reads run every two minutes. Quotas the provider does not report stay unknown. A failed read keeps the previous value with its timestamp. The dashboard reloads cached metadata every 30 seconds.
+**Manage** on a connection opens two tabs. **Accounts** lists its accounts and lets you pause or resume each one. **Setup** shows the base URL and client configuration. **Refresh** reads quotas from each provider, and background reads run every two minutes. Quotas the provider does not report stay unknown. A failed read keeps the previous value with its timestamp. The dashboard reloads cached metadata every 30 seconds.
 
 Account rows show plan multipliers and any status other than healthy.
+
+## Payment cycles
+
+![Codex Manage dialog on the Accounts tab with each account's payment cycle, the next payment and the monthly total](screenshots/codex-accounts.png)
+
+Under **Manage → Accounts**, **Set payment** records an account's subscription price, currency, monthly or yearly interval, and one charge date (past or upcoming). The row shows the next payment, repeating from that date and moving to the month's last day when needed (Jan 31 → Feb 28). The tab and the connection card show the total per month, with yearly plans divided by 12 and each currency summed separately. Funnel only displays these values. Removing the account deletes its payment cycle, and re-importing keeps it.
 
 ## Banked resets
 

@@ -35,6 +35,7 @@ type Account struct {
 	Quotas       []Quota       `json:"quotas"`
 	QuotaError   string        `json:"quotaError,omitempty"`
 	ResetCredits *ResetCredits `json:"resetCredits,omitempty"`
+	Billing      *Billing      `json:"billing,omitempty"`
 }
 type ResetCredits struct {
 	Items      []ResetCredit `json:"items,omitempty"`
@@ -168,7 +169,11 @@ func (a *App) publicConnection(conn Connection) gin.H {
 				}
 			}
 		}
-		accounts = append(accounts, Account{ID: auth.ID, Name: name, Email: email, Plan: plan, PlanTier: tier, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits})
+		var billing *Billing
+		if b, ok := d.Billing[auth.ID]; ok {
+			billing = &b
+		}
+		accounts = append(accounts, Account{ID: auth.ID, Name: name, Email: email, Plan: plan, PlanTier: tier, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits, Billing: billing})
 
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })

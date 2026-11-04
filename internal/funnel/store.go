@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,20 @@ type RequestLog struct {
 	ErrorCode         string    `json:"errorCode,omitempty"`
 	Reasoning         string    `json:"reasoning,omitempty"`
 }
+
+// Billing is a user-entered payment cycle. Funnel only displays it; it never charges or verifies anything.
+type Billing struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+	Interval string  `json:"interval"`
+	Anchor   string  `json:"anchor"`
+}
+
+func (b Billing) valid() bool {
+	_, e := time.Parse(time.DateOnly, b.Anchor)
+	return e == nil && b.Amount >= 0 && b.Amount < 1e6 && (b.Interval == "month" || b.Interval == "year") && len(b.Currency) == 3 && strings.ToUpper(b.Currency) == b.Currency
+}
+
 type Settings struct {
 	AutoUseResets bool               `json:"autoUseResets"`
 	HubTokenHash  string             `json:"hubTokenHash,omitempty"`
@@ -83,13 +98,15 @@ type diskState struct {
 	Connections   map[string]Connection   `json:"connections"`
 	Keys          map[string]Key          `json:"keys"`
 	Auths         map[string]*core.Auth   `json:"auths"`
-	Sessions      map[string]time.Time    `json:"sessions"`
-	Usage         map[string]int          `json:"usage"`
-	Requests      []RequestLog            `json:"requests"`
-	Daily         map[string]DailyUsage   `json:"daily,omitempty"`
-	Hourly        map[string]DailyUsage   `json:"hourly"`
-	KeyUsage      map[string]UsageTotals  `json:"keyUsage"`
-	TrackingAt    *time.Time              `json:"trackingAt,omitempty"`
+	// Kept outside SDK auth records so token refreshes and re-imports cannot drop it.
+	Billing    map[string]Billing     `json:"billing,omitempty"`
+	Sessions   map[string]time.Time   `json:"sessions"`
+	Usage      map[string]int         `json:"usage"`
+	Requests   []RequestLog           `json:"requests"`
+	Daily      map[string]DailyUsage  `json:"daily,omitempty"`
+	Hourly     map[string]DailyUsage  `json:"hourly"`
+	KeyUsage   map[string]UsageTotals `json:"keyUsage"`
+	TrackingAt *time.Time             `json:"trackingAt,omitempty"`
 }
 type Store struct {
 	mu     sync.Mutex
@@ -318,7 +335,7 @@ func (s *Store) Save(_ context.Context, a *core.Auth) (string, error) {
 	return "encrypted:" + a.ID, e
 }
 func (s *Store) Delete(_ context.Context, id string) error {
-	return s.change(func(d *diskState) error { delete(d.Auths, id); return nil })
+	return s.change(func(d *diskState) error { delete(d.Auths, id); delete(d.Billing, id); return nil })
 }
 func usageID(id string) string { return now().Format("2006-01-02") + ":" + id }
 

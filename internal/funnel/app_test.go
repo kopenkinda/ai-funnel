@@ -1116,11 +1116,22 @@ func TestEmbeddedService(t *testing.T) {
 			t.Fatal("imported account was not available for inference", status)
 		}
 		_, _ = request("PATCH", "/api/accounts/"+id, admin, `{"enabled":false}`)
+		billing := `{"billing":{"amount":20,"currency":"USD","interval":"month","anchor":"2026-01-31"}}`
+		if status, _ = request("PATCH", "/api/accounts/"+id, admin, billing); status != 200 {
+			t.Fatal("billing not saved", status)
+		}
 		count := len(app.core.List())
 		status, _ = request("POST", "/api/accounts/import", admin, input)
 		auth, ok := app.core.GetByID(id)
 		if status != 201 || !ok || !auth.Disabled || len(app.core.List()) != count {
 			t.Fatal("re-import duplicated or unpaused the account", status)
+		}
+		if b := app.store.read().Billing[id]; b.Amount != 20 {
+			t.Fatal("re-import dropped billing")
+		}
+		_, _ = request("PATCH", "/api/accounts/"+id, admin, `{"billing":null}`)
+		if _, ok := app.store.read().Billing[id]; ok {
+			t.Fatal("null billing did not clear the payment cycle")
 		}
 		reopened, e := NewStore(dir, admin)
 		if e != nil || str(reopened.read().Auths[id].Metadata["refresh_token"]) != "import-fixture-refresh-token" {

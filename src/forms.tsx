@@ -31,6 +31,8 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DialogFooter } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AccountsPanel } from "./billing.tsx";
 import { Spinner } from "@/components/ui/spinner";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -875,14 +877,13 @@ export function ConnectionDetails({
   connection: c,
   origin,
   onClose,
+  onSaved,
 }: {
   connection: PublicConnection;
   origin: string;
   onClose: () => void;
+  onSaved: () => Promise<void>;
 }) {
-  const [accountStates, setAccountStates] = useState<Record<string, boolean>>(
-    {},
-  );
   const [error, setError] = useState("");
   const root = `${origin}/providers/${c.provider}/${c.id}`;
   const base = c.provider === "codex" ? `${root}/backend-api/codex` : root;
@@ -892,110 +893,82 @@ export function ConnectionDetails({
       ? `model_provider = "ai-funnel"\nmodel = "${model}"\n\n[model_providers.ai-funnel]\nname = "ai-funnel"\nbase_url = "${base}"\nwire_api = "responses"\nenv_key = "AI_FUNNEL_KEY"\nrequires_openai_auth = false\nsupports_websockets = true`
       : `export ANTHROPIC_BASE_URL='${base}'\nexport ANTHROPIC_AUTH_TOKEN="$AI_FUNNEL_KEY"\nclaude`;
   return (
-    <Dialog
-      title={c.name}
-      description="Use a shared key that allows this connection."
-      onClose={onClose}
-    >
-      <div className="flex items-center gap-3">
-        <ProviderIcon provider={c.provider} />
-        <div>
-          <p className="font-medium">{providerNames[c.provider]}</p>
-          <p className="text-sm text-muted-foreground">
-            {c.provider === "codex"
-              ? "Native Codex Responses"
-              : "Native Anthropic Messages"}
-          </p>
-        </div>
-        <Badge variant="secondary" className="ml-auto">
-          {c.models.length} models
-        </Badge>
-      </div>
-      {c.accounts.length > 0 && (
-        <div className="flex flex-col gap-2" aria-label="Manage accounts">
-          {c.accounts.map((account) => {
-            const enabled =
-              accountStates[account.id] ?? account.status !== "paused";
-            return (
-              <div
-                key={account.id}
-                className="flex items-center justify-between gap-3 border-b py-2 last:border-0"
-              >
-                <span className="truncate text-sm">
-                  <PrivateText>{account.email || account.name}</PrivateText>
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      await api(
-                        `/accounts/${encodeURIComponent(account.id)}`,
-                        "PATCH",
-                        { enabled: !enabled },
-                      );
-                      setAccountStates((previous) => ({
-                        ...previous,
-                        [account.id]: !enabled,
-                      }));
-                    } catch (e) {
-                      setError((e as Error).message);
-                    }
-                  }}
-                >
-                  {enabled ? "Pause" : "Resume"}
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <FieldGroup>
-        <Field>
-          <div className="flex items-center justify-between gap-2">
-            <FieldLabel>Base URL</FieldLabel>
-            <CopyButton value={base} label="Copy URL" onError={setError} />
-          </div>
-          <code className="rounded-2xl border bg-muted/40 p-3 text-xs leading-relaxed break-all select-all">
-            {base}
-          </code>
-        </Field>
-        <Field>
-          <div className="flex items-center justify-between gap-2">
-            <FieldLabel>
-              {c.provider === "codex" ? "Codex config.toml" : "Claude Code"}
-            </FieldLabel>
-            <CopyButton
-              value={snippet}
-              label="Copy config"
-              onError={setError}
-            />
-          </div>
-          <pre className="overflow-x-auto rounded-2xl border bg-muted/40 p-4 text-xs leading-6">
-            <code>{snippet}</code>
-          </pre>
-          <FieldDescription>
-            Set AI_FUNNEL_KEY to your client key on this device.
-          </FieldDescription>
-        </Field>
-        {c.provider === "codex" && (
-          <Field>
-            <div className="flex items-center justify-between gap-2">
-              <FieldLabel>Compatible clients</FieldLabel>
-              <CopyButton
-                value={`${root}/v1`}
-                label="Copy compatible URL"
-                onError={setError}
-              />
+    <Dialog title={c.name} onClose={onClose}>
+      <Tabs defaultValue="accounts">
+        <TabsList className="w-full">
+          <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="setup">Setup</TabsTrigger>
+        </TabsList>
+        <TabsContent value="accounts" className="pt-2">
+          <AccountsPanel connection={c} onSaved={onSaved} />
+        </TabsContent>
+        <TabsContent value="setup" className="flex flex-col gap-6 pt-4">
+          <div className="flex items-center gap-3">
+            <ProviderIcon provider={c.provider} />
+            <div>
+              <p className="font-medium">{providerNames[c.provider]}</p>
+              <p className="text-sm text-muted-foreground">
+                {c.provider === "codex"
+                  ? "Native Codex Responses"
+                  : "Native Anthropic Messages"}
+              </p>
             </div>
-            <code className="rounded-2xl border bg-muted/40 p-3 text-xs leading-relaxed break-all select-all">{`${root}/v1`}</code>
-            <FieldDescription>
-              HTTP streaming is supported. Keep WebSocket transport disabled.
-            </FieldDescription>
-          </Field>
-        )}
-      </FieldGroup>
-      {error && <ErrorMessage>{error}</ErrorMessage>}
+            <Badge variant="secondary" className="ml-auto">
+              {c.models.length} models
+            </Badge>
+          </div>
+          <FieldGroup>
+            <Field>
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabel>Base URL</FieldLabel>
+                <CopyButton value={base} label="Copy URL" onError={setError} />
+              </div>
+              <code className="rounded-2xl border bg-muted/40 p-3 text-xs leading-relaxed break-all select-all">
+                {base}
+              </code>
+            </Field>
+            <Field>
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabel>
+                  {c.provider === "codex" ? "Codex config.toml" : "Claude Code"}
+                </FieldLabel>
+                <CopyButton
+                  value={snippet}
+                  label="Copy config"
+                  onError={setError}
+                />
+              </div>
+              <pre className="overflow-x-auto rounded-2xl border bg-muted/40 p-4 text-xs leading-6">
+                <code>{snippet}</code>
+              </pre>
+              <FieldDescription>
+                Set AI_FUNNEL_KEY to your client key on this device.
+              </FieldDescription>
+            </Field>
+            {c.provider === "codex" && (
+              <Field>
+                <div className="flex items-center justify-between gap-2">
+                  <FieldLabel>Compatible clients</FieldLabel>
+                  <CopyButton
+                    value={`${root}/v1`}
+                    label="Copy compatible URL"
+                    onError={setError}
+                  />
+                </div>
+                <code className="rounded-2xl border bg-muted/40 p-3 text-xs leading-relaxed break-all select-all">{`${root}/v1`}</code>
+                <FieldDescription>
+                  HTTP streaming is supported. Keep WebSocket transport
+                  disabled.
+                </FieldDescription>
+              </Field>
+            )}
+          </FieldGroup>
+          <FieldDescription>
+            Use a shared key that allows this connection.
+          </FieldDescription>
+          {error && <ErrorMessage>{error}</ErrorMessage>}
+        </TabsContent>
+      </Tabs>
     </Dialog>
   );
 }
