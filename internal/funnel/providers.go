@@ -53,6 +53,8 @@ type Snapshot struct {
 	ResetCredits *ResetCredits `json:"resetCredits,omitempty"`
 	// Hub is the sanitized usage body served to per-key usage hubs.
 	Hub json.RawMessage `json:"hub,omitempty"`
+	// SignedOut records that the provider rejected the credentials on the last read.
+	SignedOut bool `json:"signedOut,omitempty"`
 	// Started orders overlapping refreshes. At is kept from the last success.
 	Started time.Time `json:"started,omitempty"`
 }
@@ -125,7 +127,9 @@ func (a *App) publicConnection(conn Connection) gin.H {
 			tier = str(auth.Metadata["rate_limit_tier"])
 		}
 		status := "active"
-		if auth.Disabled {
+		if snap.SignedOut || core.HasUnauthorizedAuthFailure(auth) || core.HasDisabledInvalidGrantFailure(auth) {
+			status = "signed_out"
+		} else if auth.Disabled {
 			status = "paused"
 		} else if auth.Unavailable {
 			status = "rate_limited"
@@ -225,6 +229,9 @@ func (a *App) refreshAccount(ctx context.Context, conn Connection, auth *core.Au
 		var data map[string]any
 		if response.StatusCode == 200 {
 			e = json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&data)
+		} else if response.StatusCode == 401 {
+			snap.SignedOut = true
+			e = fmt.Errorf("signed out")
 		} else {
 			e = fmt.Errorf("quota lookup failed")
 		}
@@ -253,6 +260,9 @@ func (a *App) refreshAccount(ctx context.Context, conn Connection, auth *core.Au
 	}
 	if e != nil {
 		snap.Error = "Quota lookup unavailable. Retry refresh later."
+		if snap.SignedOut {
+			snap.Error = "Signed out. Sign in again to restore this account."
+		}
 		old := a.store.read().Snapshots[auth.ID]
 		snap.Quotas = old.Quotas
 		snap.ResetCredits = old.ResetCredits

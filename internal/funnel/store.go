@@ -278,6 +278,29 @@ func (s *Store) change(fn func(*diskState) error) error {
 	return e
 }
 
+// sameAccount reports whether two credentials sign in to one provider account.
+// OAuth names Codex credentials by plan, so IDs alone change after an upgrade.
+func sameAccount(old, auth *core.Auth) bool {
+	if old.Provider != auth.Provider {
+		return false
+	}
+	field := "account_id"
+	if auth.Provider == "claude" {
+		field = "account_uuid"
+	}
+	identity := str(auth.Metadata[field])
+	email, oldEmail := str(auth.Metadata["email"]), str(old.Metadata["email"])
+	emailMatches := email == "" || oldEmail == "" || strings.EqualFold(email, oldEmail)
+	return identity != "" && identity == str(old.Metadata[field]) && emailMatches && str(old.Metadata["organization_uuid"]) == str(auth.Metadata["organization_uuid"])
+}
+
+// adoptAccount keeps the existing ID so key grants, billing and history stay
+// attached. A manual pause survives; a sign-out the SDK disabled does not.
+func adoptAccount(old, auth *core.Auth) {
+	auth.ID, auth.CreatedAt = old.ID, old.CreatedAt
+	auth.Disabled = old.Disabled && !core.HasDisabledInvalidGrantFailure(old)
+}
+
 // The SDK uses this store for both OAuth login and refresh. No plaintext token files are created.
 func (s *Store) List(context.Context) ([]*core.Auth, error) {
 	d := s.read()
@@ -318,6 +341,17 @@ func (s *Store) Save(_ context.Context, a *core.Auth) (string, error) {
 	copy.Metadata["type"] = a.Provider
 	// A virtual path keeps SDK post-persist registration from reading an unencrypted file.
 	e = s.change(func(d *diskState) error {
+		// The SDK registers the record under whatever ID it holds after Save,
+		// so a new login for a known account updates that account in place.
+		if d.Auths[a.ID] == nil {
+			for _, old := range d.Auths {
+				if sameAccount(old, &copy) {
+					adoptAccount(old, a)
+					copy.ID, copy.CreatedAt, copy.Disabled = a.ID, a.CreatedAt, a.Disabled
+					break
+				}
+			}
+		}
 		if a.CodexRefreshPatch != nil {
 			if previous := d.Auths[a.ID]; previous != nil {
 				copy.Metadata = a.CodexRefreshPatch.Apply(previous.Metadata)

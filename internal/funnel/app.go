@@ -310,6 +310,20 @@ func (a *App) dashboard(c *gin.Context) {
 		return
 	}
 	parts := strings.Split(p, "/")
+	if len(parts) == 3 && parts[0] == "accounts" && parts[2] == "sync" && m == "POST" {
+		auth, ok := a.core.GetByID(parts[1])
+		var conn Connection
+		if ok {
+			conn, ok = a.store.read().Connections[auth.Provider]
+		}
+		if !ok {
+			fail(c, 404, "Account not found.")
+			return
+		}
+		a.refreshAccount(c.Request.Context(), conn, auth)
+		c.JSON(200, gin.H{"ok": true})
+		return
+	}
 	if len(parts) == 3 && parts[0] == "accounts" && parts[2] == "reset" && m == "POST" {
 		a.resetAccount(c, parts[1])
 		return

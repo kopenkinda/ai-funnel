@@ -7,6 +7,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import {
   providerNames,
+  type Account,
   type Grant,
   type Provider,
   type PublicConnection,
@@ -52,11 +53,14 @@ export function ConnectionForm({
   onSaved,
   provider,
   connection,
+  account,
 }: {
   onClose: () => void;
   onSaved: () => Promise<void>;
   provider: Provider;
   connection?: PublicConnection;
+  // Set when restoring a signed-out account; the same login updates it in place.
+  account?: Account;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -164,12 +168,16 @@ export function ConnectionForm({
       title={
         login
           ? `Sign in to ${providerNames[provider]}`
-          : `Add ${providerNames[provider]} account`
+          : account
+            ? `Sign in as ${account.email || account.name}`
+            : `Add ${providerNames[provider]} account`
       }
       description={
         login
           ? "Complete sign-in in your browser, then return here."
-          : undefined
+          : account
+            ? "Use the same account. Its keys, payments and history stay attached."
+            : undefined
       }
       onClose={onClose}
     >
@@ -878,11 +886,13 @@ export function ConnectionDetails({
   origin,
   onClose,
   onSaved,
+  onSignIn,
 }: {
   connection: PublicConnection;
   origin: string;
   onClose: () => void;
   onSaved: () => Promise<void>;
+  onSignIn: (account: Account) => void;
 }) {
   const [error, setError] = useState("");
   const root = `${origin}/providers/${c.provider}/${c.id}`;
@@ -900,7 +910,7 @@ export function ConnectionDetails({
           <TabsTrigger value="setup">Setup</TabsTrigger>
         </TabsList>
         <TabsContent value="accounts" className="pt-2">
-          <AccountsPanel connection={c} onSaved={onSaved} />
+          <AccountsPanel connection={c} onSaved={onSaved} onSignIn={onSignIn} />
         </TabsContent>
         <TabsContent value="setup" className="flex flex-col gap-6 pt-4">
           <div className="flex items-center gap-3">

@@ -1,10 +1,13 @@
 import { useState, type FormEvent } from "react";
+import { HugeiconsIcon as Icon } from "@hugeicons/react";
+import { Refresh01Icon } from "@hugeicons/core-free-icons";
 import type { Account, Billing, PublicConnection } from "./types.ts";
 import { api } from "./api.ts";
 import { ErrorMessage } from "./ui.tsx";
 import { PrivateText } from "./privacy.tsx";
 import { PlanBadge } from "./accounts.tsx";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -73,18 +76,29 @@ function due(date: Date) {
 export function AccountsPanel({
   connection: c,
   onSaved,
+  onSignIn,
 }: {
   connection: PublicConnection;
   onSaved: () => Promise<void>;
+  onSignIn: (account: Account) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  async function patch(account: Account, body: object) {
+  async function send(
+    account: Account,
+    method: string,
+    path = "",
+    body?: object,
+  ) {
     setBusy(account.id);
     setError("");
     try {
-      await api(`/accounts/${encodeURIComponent(account.id)}`, "PATCH", body);
+      await api(
+        `/accounts/${encodeURIComponent(account.id)}${path}`,
+        method,
+        body,
+      );
       await onSaved();
       return true;
     } catch (e) {
@@ -105,6 +119,8 @@ export function AccountsPanel({
       <div className="flex flex-col" aria-label="Manage accounts">
         {c.accounts.map((account) => {
           const paused = account.status === "paused";
+          const signedOut = account.status === "signed_out";
+          const name = account.email || account.name;
           const b = account.billing;
           return (
             <div
@@ -115,7 +131,7 @@ export function AccountsPanel({
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-sm font-medium">
-                      <PrivateText>{account.email || account.name}</PrivateText>
+                      <PrivateText>{name}</PrivateText>
                     </span>
                     <PlanBadge
                       plan={account.planTier || account.plan}
@@ -123,6 +139,9 @@ export function AccountsPanel({
                     />
                   </div>
                   <span className="text-xs text-muted-foreground">
+                    {signedOut && (
+                      <span className="text-destructive">Signed out · </span>
+                    )}
                     {paused && <span className="text-warning">Paused · </span>}
                     {b
                       ? `${money(b.amount, b.currency)} ${b.interval === "year" ? "yearly" : "monthly"} · next ${due(nextPayment(b))}`
@@ -134,7 +153,7 @@ export function AccountsPanel({
                     <Button
                       variant="ghost"
                       size="sm"
-                      aria-label={`${b ? "Edit" : "Set"} payment for ${account.email || account.name}`}
+                      aria-label={`${b ? "Edit" : "Set"} payment for ${name}`}
                       onClick={() => {
                         setError("");
                         setEditing(account.id);
@@ -144,13 +163,34 @@ export function AccountsPanel({
                     </Button>
                   )}
                   <Button
-                    variant="outline"
-                    size="sm"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Refetch ${name}`}
                     disabled={busy === account.id}
-                    onClick={() => void patch(account, { enabled: paused })}
+                    onClick={() => void send(account, "POST", "/sync")}
                   >
-                    {paused ? "Resume" : "Pause"}
+                    {busy === account.id ? (
+                      <Spinner />
+                    ) : (
+                      <Icon icon={Refresh01Icon} />
+                    )}
                   </Button>
+                  {signedOut ? (
+                    <Button size="sm" onClick={() => onSignIn(account)}>
+                      Sign in again
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy === account.id}
+                      onClick={() =>
+                        void send(account, "PATCH", "", { enabled: paused })
+                      }
+                    >
+                      {paused ? "Resume" : "Pause"}
+                    </Button>
+                  )}
                 </div>
               </div>
               {editing === account.id && (
@@ -160,7 +200,8 @@ export function AccountsPanel({
                   busy={busy === account.id}
                   onCancel={() => setEditing(null)}
                   onSave={async (billing) => {
-                    if (await patch(account, { billing })) setEditing(null);
+                    if (await send(account, "PATCH", "", { billing }))
+                      setEditing(null);
                   }}
                 />
               )}

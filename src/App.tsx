@@ -21,6 +21,7 @@ import {
 import {
   providers,
   providerNames,
+  type Account,
   type Provider,
   type PublicConnection,
 } from "./types.ts";
@@ -107,6 +108,15 @@ const unsupportedProviders: {
   { name: "OpenAI compatible" },
 ];
 
+const signedOut = (c: PublicConnection) =>
+  c.accounts.filter((a) => a.status === "signed_out").length;
+function cardStatus(c: PublicConnection) {
+  if (c.error) return "Needs attention";
+  if (signedOut(c)) return `${signedOut(c)} signed out`;
+  if (!c.enabled && c.accounts.length > 0) return "Paused";
+  return null;
+}
+
 export function App() {
   return useRoutes([
     ...tabs.map(({ id, path }) => ({ path, element: <Dashboard tab={id} /> })),
@@ -122,6 +132,7 @@ function Dashboard({ tab }: { tab: Tab }) {
   const [modal, setModal] = useState<"key" | "settings" | null>(null);
   const [detailsId, setDetailsId] = useState<string | null>(null);
   const [accountProvider, setAccountProvider] = useState<Provider | null>(null);
+  const [reauth, setReauth] = useState<Account | null>(null);
   const [remove, setRemove] = useState<{
     type: "connections" | "keys";
     id: string;
@@ -344,15 +355,16 @@ function Dashboard({ tab }: { tab: Tab }) {
                                 </span>
                               </span>
                             </CardTitle>
-                            {(c?.error ||
-                              (c && !c.enabled && c.accounts.length > 0)) && (
+                            {c && cardStatus(c) && (
                               <CardAction>
                                 <Badge
                                   variant={
-                                    c.error ? "destructive" : "secondary"
+                                    cardStatus(c) === "Paused"
+                                      ? "secondary"
+                                      : "destructive"
                                   }
                                 >
-                                  {c.error ? "Needs attention" : "Paused"}
+                                  {cardStatus(c)}
                                 </Badge>
                               </CardAction>
                             )}
@@ -597,7 +609,11 @@ function Dashboard({ tab }: { tab: Tab }) {
         <ConnectionForm
           provider={accountProvider}
           connection={connections.find((c) => c.provider === accountProvider)}
-          onClose={() => setAccountProvider(null)}
+          account={reauth ?? undefined}
+          onClose={() => {
+            setAccountProvider(null);
+            setReauth(null);
+          }}
           onSaved={reload}
         />
       )}
@@ -614,6 +630,11 @@ function Dashboard({ tab }: { tab: Tab }) {
           origin={origin}
           onClose={() => setDetailsId(null)}
           onSaved={reload}
+          onSignIn={(account) => {
+            setDetailsId(null);
+            setReauth(account);
+            setAccountProvider(details.provider);
+          }}
         />
       )}
       {remove && (

@@ -249,7 +249,11 @@ function AccountReset({
       <Button
         variant="outline"
         size="xs"
-        disabled={busy || !connection.enabled || account.status === "paused"}
+        disabled={
+          busy ||
+          !connection.enabled ||
+          ["paused", "signed_out"].includes(account.status)
+        }
         onClick={async () => {
           setBusy(true);
           try {

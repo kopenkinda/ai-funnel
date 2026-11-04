@@ -8,7 +8,7 @@ Open **Connections**, choose **Add account** on the Codex or Claude card, then p
 - **Auth token** accepts an OAuth access token or a Claude setup token. Codex normally reads the account ID from the token, and you can enter it when needed. A token without refresh credentials works until it expires, then needs replacing.
 - **JSON file** imports Codex's `~/.codex/auth.json`, a flat CLIProxyAPI credential file, or Claude Code's `.credentials.json`. Refresh tokens and expiry are kept. Subscription credentials work; API-key-only Codex files are rejected.
 
-Imports go straight into the encrypted store and are usable without a restart. Re-importing a known account keeps its ID, key assignments and pause state. The app never modifies your source file or saves a plaintext copy. Token validity is checked by provider requests, not by parsing the file.
+Imports go straight into the encrypted store and are usable without a restart. Re-importing or signing in again to a known account keeps its ID, key assignments and pause state. The app never modifies your source file or saves a plaintext copy. Token validity is checked by provider requests, not by parsing the file.
 
 Gemini, Vertex AI, Grok and the other CLIProxyAPI providers appear under **Unsupported** and cannot be connected.
 
@@ -17,6 +17,12 @@ Gemini, Vertex AI, Grok and the other CLIProxyAPI providers appear under **Unsup
 **Manage** on a connection opens two tabs. **Accounts** lists its accounts and lets you pause or resume each one. **Setup** shows the base URL and client configuration. **Refresh** reads quotas from each provider, and background reads run every two minutes. Quotas the provider does not report stay unknown. A failed read keeps the previous value with its timestamp. The dashboard reloads cached metadata every 30 seconds.
 
 Account rows show plan multipliers and any status other than healthy.
+
+The refresh button on an account row in **Manage → Accounts** reads that account's quotas again.
+
+### Signing in again
+
+An account is marked **Signed out** when the provider rejects its credentials. That happens after a revoked or reused refresh token, or a 401 from the quota check. The connection card shows how many accounts are signed out, and the row offers **Sign in again**. Sign in with the same provider account, using any source. Funnel matches the login to the existing account by provider account ID and email, not by credential name, so the account keeps its ID, key assignments, payment cycle and history even after a plan change. A manual pause is kept. An account the SDK disabled because it was signed out is enabled again.
 
 ## Payment cycles
 
