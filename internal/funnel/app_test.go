@@ -60,11 +60,47 @@ func TestOAuthStorageSurvivesRestart(t *testing.T) {
 	}
 }
 
+type PublicConnectionFixture struct {
+	Accounts []Account `json:"accounts"`
+}
+
+func TestReloginKeepsAccountIdentity(t *testing.T) {
+	s, e := NewStore(t.TempDir(), "identity-test-dashboard-key")
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx := context.Background()
+	login := func(id, plan string) *core.Auth {
+		return &core.Auth{ID: id, Provider: "codex", Metadata: map[string]any{"email": "person@example.com", "account_id": "chatgpt-account", "plan_type": plan}}
+	}
+	first := login("codex-1a2b3c4d-person@example.com-plus.json", "plus")
+	first.Disabled = true
+	if _, e = s.Save(ctx, first); e != nil {
+		t.Fatal(e)
+	}
+	// Codex OAuth names credentials by plan, so an upgrade arrives under a new ID.
+	again := login("codex-1a2b3c4d-person@example.com-pro.json", "pro")
+	path, e := s.Save(ctx, again)
+	auths := s.read().Auths
+	if e != nil || path != "encrypted:"+first.ID || again.ID != first.ID || len(auths) != 1 || !again.Disabled {
+		t.Fatal("re-login created a new account or unpaused it", path, again.ID, len(auths))
+	}
+	if str(auths[first.ID].Metadata["plan_type"]) != "pro" {
+		t.Fatal("re-login did not replace the credentials")
+	}
+	other := login("codex-other.json", "plus")
+	other.Metadata["account_id"] = "different-account"
+	if _, e = s.Save(ctx, other); e != nil || other.ID != "codex-other.json" || len(s.read().Auths) != 2 {
+		t.Fatal("a different account was merged")
+	}
+}
+
 type captureExecutor struct {
 	provider    string
 	mu          sync.Mutex
 	ids         []string
 	creditUsage map[string]string
+	signedOut   string
 }
 
 func (x *captureExecutor) Identifier() string {
@@ -96,7 +132,11 @@ func (*captureExecutor) CountTokens(context.Context, *core.Auth, executor.Reques
 func (x *captureExecutor) HttpRequest(_ context.Context, auth *core.Auth, _ *http.Request) (*http.Response, error) {
 	x.mu.Lock()
 	body, ok := x.creditUsage[auth.ID]
+	signedOut := x.signedOut == auth.ID
 	x.mu.Unlock()
+	if signedOut {
+		return &http.Response{StatusCode: 401, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	}
 	if ok {
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	}
@@ -1060,6 +1100,36 @@ func TestEmbeddedService(t *testing.T) {
 			t.Fatalf("quota %d %s", status, b)
 		}
 	})
+	t.Run("account refetch reports sign-out until credentials work again", func(t *testing.T) {
+		accountStatus := func() string {
+			_, b := request("GET", "/api/state", admin, "")
+			var state struct{ Connections []PublicConnectionFixture }
+			_ = json.Unmarshal(b, &state)
+			for _, c := range state.Connections {
+				for _, a := range c.Accounts {
+					if a.ID == "account-a" {
+						return a.Status
+					}
+				}
+			}
+			return ""
+		}
+		capture.mu.Lock()
+		capture.signedOut = "account-a"
+		capture.mu.Unlock()
+		if status, _ := request("POST", "/api/accounts/account-a/sync", admin, ""); status != 200 || accountStatus() != "signed_out" {
+			t.Fatal("rejected credentials were not reported as signed out", status)
+		}
+		capture.mu.Lock()
+		capture.signedOut = ""
+		capture.mu.Unlock()
+		if request("POST", "/api/accounts/account-a/sync", admin, ""); accountStatus() == "signed_out" {
+			t.Fatal("working credentials stayed signed out")
+		}
+		if status, _ := request("POST", "/api/accounts/missing/sync", admin, ""); status != 404 {
+			t.Fatal("unknown account refetch", status)
+		}
+	})
 	t.Run("encrypted credentials survive restart", func(t *testing.T) {
 		raw, e := os.ReadFile(filepath.Join(dir, "state.enc"))
 		if e != nil {
@@ -1116,11 +1186,22 @@ func TestEmbeddedService(t *testing.T) {
 			t.Fatal("imported account was not available for inference", status)
 		}
 		_, _ = request("PATCH", "/api/accounts/"+id, admin, `{"enabled":false}`)
+		billing := `{"billing":{"amount":20,"currency":"USD","interval":"month","anchor":"2026-01-31"}}`
+		if status, _ = request("PATCH", "/api/accounts/"+id, admin, billing); status != 200 {
+			t.Fatal("billing not saved", status)
+		}
 		count := len(app.core.List())
 		status, _ = request("POST", "/api/accounts/import", admin, input)
 		auth, ok := app.core.GetByID(id)
 		if status != 201 || !ok || !auth.Disabled || len(app.core.List()) != count {
 			t.Fatal("re-import duplicated or unpaused the account", status)
+		}
+		if b := app.store.read().Billing[id]; b.Amount != 20 {
+			t.Fatal("re-import dropped billing")
+		}
+		_, _ = request("PATCH", "/api/accounts/"+id, admin, `{"billing":null}`)
+		if _, ok := app.store.read().Billing[id]; ok {
+			t.Fatal("null billing did not clear the payment cycle")
 		}
 		reopened, e := NewStore(dir, admin)
 		if e != nil || str(reopened.read().Auths[id].Metadata["refresh_token"]) != "import-fixture-refresh-token" {

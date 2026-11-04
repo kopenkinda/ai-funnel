@@ -69,7 +69,7 @@ Repeat step 2 for every account you want in the pool. Imports apply immediately 
 
 ## Connect a client
 
-**URL & setup** on each connection shows the exact base URL and a ready-to-copy snippet for your host. Keep the client key in an environment variable on each device:
+**Manage → Setup** on each connection shows the exact base URL and a ready-to-copy snippet for your host. Keep the client key in an environment variable on each device:
 
 ```sh
 export AI_FUNNEL_KEY='sk-af-...'
@@ -112,7 +112,7 @@ Both `Authorization: Bearer` and `x-api-key` headers are accepted. Endpoints, tr
     <td width="50%"><a href="docs/screenshots/activity.png"><img src="docs/screenshots/activity.png" alt="Activity log listing requests with account, API key, model, tokens, speed and estimated cost"></a></td>
   </tr>
   <tr>
-    <td><a href="docs/screenshots/codex-setup.png"><img src="docs/screenshots/codex-setup.png" alt="Codex URL and setup dialog with account pause controls, base URL and config.toml snippet"></a></td>
+    <td><a href="docs/screenshots/codex-setup.png"><img src="docs/screenshots/codex-setup.png" alt="Codex Manage dialog on the Setup tab with the base URL and config.toml snippet"></a></td>
     <td><a href="docs/screenshots/settings-routing.png"><img src="docs/screenshots/settings-routing.png" alt="Settings dialog with Codex and Claude routing strategies, banked reset and usage hub options"></a></td>
   </tr>
 </table>

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,20 @@ type RequestLog struct {
 	ErrorCode         string    `json:"errorCode,omitempty"`
 	Reasoning         string    `json:"reasoning,omitempty"`
 }
+
+// Billing is a user-entered payment cycle. Funnel only displays it; it never charges or verifies anything.
+type Billing struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+	Interval string  `json:"interval"`
+	Anchor   string  `json:"anchor"`
+}
+
+func (b Billing) valid() bool {
+	_, e := time.Parse(time.DateOnly, b.Anchor)
+	return e == nil && b.Amount >= 0 && b.Amount < 1e6 && (b.Interval == "month" || b.Interval == "year") && len(b.Currency) == 3 && strings.ToUpper(b.Currency) == b.Currency
+}
+
 type Settings struct {
 	AutoUseResets bool               `json:"autoUseResets"`
 	HubTokenHash  string             `json:"hubTokenHash,omitempty"`
@@ -83,13 +98,15 @@ type diskState struct {
 	Connections   map[string]Connection   `json:"connections"`
 	Keys          map[string]Key          `json:"keys"`
 	Auths         map[string]*core.Auth   `json:"auths"`
-	Sessions      map[string]time.Time    `json:"sessions"`
-	Usage         map[string]int          `json:"usage"`
-	Requests      []RequestLog            `json:"requests"`
-	Daily         map[string]DailyUsage   `json:"daily,omitempty"`
-	Hourly        map[string]DailyUsage   `json:"hourly"`
-	KeyUsage      map[string]UsageTotals  `json:"keyUsage"`
-	TrackingAt    *time.Time              `json:"trackingAt,omitempty"`
+	// Kept outside SDK auth records so token refreshes and re-imports cannot drop it.
+	Billing    map[string]Billing     `json:"billing,omitempty"`
+	Sessions   map[string]time.Time   `json:"sessions"`
+	Usage      map[string]int         `json:"usage"`
+	Requests   []RequestLog           `json:"requests"`
+	Daily      map[string]DailyUsage  `json:"daily,omitempty"`
+	Hourly     map[string]DailyUsage  `json:"hourly"`
+	KeyUsage   map[string]UsageTotals `json:"keyUsage"`
+	TrackingAt *time.Time             `json:"trackingAt,omitempty"`
 }
 type Store struct {
 	mu     sync.Mutex
@@ -261,6 +278,29 @@ func (s *Store) change(fn func(*diskState) error) error {
 	return e
 }
 
+// sameAccount reports whether two credentials sign in to one provider account.
+// OAuth names Codex credentials by plan, so IDs alone change after an upgrade.
+func sameAccount(old, auth *core.Auth) bool {
+	if old.Provider != auth.Provider {
+		return false
+	}
+	field := "account_id"
+	if auth.Provider == "claude" {
+		field = "account_uuid"
+	}
+	identity := str(auth.Metadata[field])
+	email, oldEmail := str(auth.Metadata["email"]), str(old.Metadata["email"])
+	emailMatches := email == "" || oldEmail == "" || strings.EqualFold(email, oldEmail)
+	return identity != "" && identity == str(old.Metadata[field]) && emailMatches && str(old.Metadata["organization_uuid"]) == str(auth.Metadata["organization_uuid"])
+}
+
+// adoptAccount keeps the existing ID so key grants, billing and history stay
+// attached. A manual pause survives; a sign-out the SDK disabled does not.
+func adoptAccount(old, auth *core.Auth) {
+	auth.ID, auth.CreatedAt = old.ID, old.CreatedAt
+	auth.Disabled = old.Disabled && !core.HasDisabledInvalidGrantFailure(old)
+}
+
 // The SDK uses this store for both OAuth login and refresh. No plaintext token files are created.
 func (s *Store) List(context.Context) ([]*core.Auth, error) {
 	d := s.read()
@@ -301,6 +341,17 @@ func (s *Store) Save(_ context.Context, a *core.Auth) (string, error) {
 	copy.Metadata["type"] = a.Provider
 	// A virtual path keeps SDK post-persist registration from reading an unencrypted file.
 	e = s.change(func(d *diskState) error {
+		// The SDK registers the record under whatever ID it holds after Save,
+		// so a new login for a known account updates that account in place.
+		if d.Auths[a.ID] == nil {
+			for _, old := range d.Auths {
+				if sameAccount(old, &copy) {
+					adoptAccount(old, a)
+					copy.ID, copy.CreatedAt, copy.Disabled = a.ID, a.CreatedAt, a.Disabled
+					break
+				}
+			}
+		}
 		if a.CodexRefreshPatch != nil {
 			if previous := d.Auths[a.ID]; previous != nil {
 				copy.Metadata = a.CodexRefreshPatch.Apply(previous.Metadata)
@@ -318,7 +369,7 @@ func (s *Store) Save(_ context.Context, a *core.Auth) (string, error) {
 	return "encrypted:" + a.ID, e
 }
 func (s *Store) Delete(_ context.Context, id string) error {
-	return s.change(func(d *diskState) error { delete(d.Auths, id); return nil })
+	return s.change(func(d *diskState) error { delete(d.Auths, id); delete(d.Billing, id); return nil })
 }
 func usageID(id string) string { return now().Format("2006-01-02") + ":" + id }
 

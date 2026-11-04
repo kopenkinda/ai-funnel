@@ -148,22 +148,8 @@ func (a *App) importAccount(c *gin.Context) {
 	}
 	// Re-import updates the same account and retains existing key assignments and pauses.
 	for _, old := range a.core.List() {
-		if old.Provider != auth.Provider {
-			continue
-		}
-		same := old.ID == auth.ID
-		identityField := "account_id"
-		if auth.Provider == "claude" {
-			identityField = "account_uuid"
-		}
-		identity := str(auth.Metadata[identityField])
-		email, oldEmail := str(auth.Metadata["email"]), str(old.Metadata["email"])
-		emailMatches := email == "" || oldEmail == "" || strings.EqualFold(email, oldEmail)
-		if identity != "" && identity == str(old.Metadata[identityField]) && emailMatches && str(old.Metadata["organization_uuid"]) == str(auth.Metadata["organization_uuid"]) {
-			same = true
-		}
-		if same {
-			auth.ID, auth.CreatedAt, auth.Disabled = old.ID, old.CreatedAt, old.Disabled
+		if old.ID == auth.ID || sameAccount(old, auth) {
+			adoptAccount(old, auth)
 			break
 		}
 	}

@@ -21,6 +21,7 @@ import {
 import {
   providers,
   providerNames,
+  type Account,
   type Provider,
   type PublicConnection,
 } from "./types.ts";
@@ -32,6 +33,7 @@ import { KeyManager, KeyUsageSummary } from "./keys";
 import { ActivityLog } from "./activity";
 import { DashboardSettings } from "./settings";
 import { UsageOverview } from "./usage.tsx";
+import { monthlyCost } from "./billing.tsx";
 import { PrivacyButton, PrivateText } from "./privacy.tsx";
 import { ConnectionDetails, ConnectionForm, KeyForm } from "./forms.tsx";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -106,6 +108,15 @@ const unsupportedProviders: {
   { name: "OpenAI compatible" },
 ];
 
+const signedOut = (c: PublicConnection) =>
+  c.accounts.filter((a) => a.status === "signed_out").length;
+function cardStatus(c: PublicConnection) {
+  if (c.error) return "Needs attention";
+  if (signedOut(c)) return `${signedOut(c)} signed out`;
+  if (!c.enabled && c.accounts.length > 0) return "Paused";
+  return null;
+}
+
 export function App() {
   return useRoutes([
     ...tabs.map(({ id, path }) => ({ path, element: <Dashboard tab={id} /> })),
@@ -119,8 +130,9 @@ function Dashboard({ tab }: { tab: Tab }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [modal, setModal] = useState<"key" | "settings" | null>(null);
-  const [details, setDetails] = useState<PublicConnection | null>(null);
+  const [detailsId, setDetailsId] = useState<string | null>(null);
   const [accountProvider, setAccountProvider] = useState<Provider | null>(null);
+  const [reauth, setReauth] = useState<Account | null>(null);
   const [remove, setRemove] = useState<{
     type: "connections" | "keys";
     id: string;
@@ -158,6 +170,8 @@ function Dashboard({ tab }: { tab: Tab }) {
     };
   });
   const origin = state.publicUrl || window.location.origin;
+  // Derived from state so the dialog shows saved changes after each reload.
+  const details = connections.find((c) => c.id === detailsId);
   async function action(id: string, task: () => Promise<unknown>) {
     setBusy(id);
     setError("");
@@ -341,15 +355,16 @@ function Dashboard({ tab }: { tab: Tab }) {
                                 </span>
                               </span>
                             </CardTitle>
-                            {(c?.error ||
-                              (c && !c.enabled && c.accounts.length > 0)) && (
+                            {c && cardStatus(c) && (
                               <CardAction>
                                 <Badge
                                   variant={
-                                    c.error ? "destructive" : "secondary"
+                                    cardStatus(c) === "Paused"
+                                      ? "secondary"
+                                      : "destructive"
                                   }
                                 >
-                                  {c.error ? "Needs attention" : "Paused"}
+                                  {cardStatus(c)}
                                 </Badge>
                               </CardAction>
                             )}
@@ -377,6 +392,16 @@ function Dashboard({ tab }: { tab: Tab }) {
                                   models
                                 </span>
                               </span>
+                              {c && monthlyCost(c.accounts).length > 0 && (
+                                <span>
+                                  <strong className="font-medium">
+                                    {monthlyCost(c.accounts).join(" + ")}
+                                  </strong>{" "}
+                                  <span className="text-muted-foreground">
+                                    per month
+                                  </span>
+                                </span>
+                              )}
                             </div>
                             {c?.error && (
                               <div className="mt-4">
@@ -389,9 +414,9 @@ function Dashboard({ tab }: { tab: Tab }) {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => setDetails(c)}
+                                onClick={() => setDetailsId(c.id)}
                               >
-                                URL & setup
+                                Manage
                                 <Icon
                                   icon={ArrowUpRight01Icon}
                                   data-icon="inline-end"
@@ -584,7 +609,11 @@ function Dashboard({ tab }: { tab: Tab }) {
         <ConnectionForm
           provider={accountProvider}
           connection={connections.find((c) => c.provider === accountProvider)}
-          onClose={() => setAccountProvider(null)}
+          account={reauth ?? undefined}
+          onClose={() => {
+            setAccountProvider(null);
+            setReauth(null);
+          }}
           onSaved={reload}
         />
       )}
@@ -599,7 +628,13 @@ function Dashboard({ tab }: { tab: Tab }) {
         <ConnectionDetails
           connection={details}
           origin={origin}
-          onClose={() => setDetails(null)}
+          onClose={() => setDetailsId(null)}
+          onSaved={reload}
+          onSignIn={(account) => {
+            setDetailsId(null);
+            setReauth(account);
+            setAccountProvider(details.provider);
+          }}
         />
       )}
       {remove && (

@@ -9,6 +9,13 @@ export interface Quota {
   remaining: number | null;
   resetsAt: string | null;
 }
+export interface Billing {
+  amount: number;
+  currency: string;
+  interval: "month" | "year";
+  // Any past or upcoming charge date (YYYY-MM-DD); later payments repeat from it.
+  anchor: string;
+}
 export interface Account {
   id: string;
   name: string;
@@ -18,6 +25,7 @@ export interface Account {
   status: string;
   quotas: Quota[];
   quotaError?: string;
+  billing?: Billing;
   resetCredits?: {
     available: number;
     applicable: number | null;

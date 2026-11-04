@@ -310,6 +310,20 @@ func (a *App) dashboard(c *gin.Context) {
 		return
 	}
 	parts := strings.Split(p, "/")
+	if len(parts) == 3 && parts[0] == "accounts" && parts[2] == "sync" && m == "POST" {
+		auth, ok := a.core.GetByID(parts[1])
+		var conn Connection
+		if ok {
+			conn, ok = a.store.read().Connections[auth.Provider]
+		}
+		if !ok {
+			fail(c, 404, "Account not found.")
+			return
+		}
+		a.refreshAccount(c.Request.Context(), conn, auth)
+		c.JSON(200, gin.H{"ok": true})
+		return
+	}
 	if len(parts) == 3 && parts[0] == "accounts" && parts[2] == "reset" && m == "POST" {
 		a.resetAccount(c, parts[1])
 		return
@@ -385,18 +399,42 @@ func (a *App) dashboard(c *gin.Context) {
 		} else {
 			var b struct {
 				Enabled *bool `json:"enabled"`
+				// Absent leaves billing unchanged; null clears it.
+				Billing json.RawMessage `json:"billing"`
 			}
 			if !decode(c, &b) {
 				return
 			}
-			if b.Enabled == nil {
-				fail(c, 400, "Supply the account state.")
+			if b.Enabled == nil && b.Billing == nil {
+				fail(c, 400, "Supply the account state or billing.")
 				return
 			}
-			auth.Disabled = !*b.Enabled
-			if _, e := a.core.Update(c.Request.Context(), auth); e != nil {
-				fail(c, 500, "Could not update account.")
-				return
+			if b.Billing != nil {
+				var billing *Billing
+				if json.Unmarshal(b.Billing, &billing) != nil || (billing != nil && !billing.valid()) {
+					fail(c, 400, "Supply an amount, currency, monthly or yearly interval, and payment date.")
+					return
+				}
+				if !a.save(c, func(d *diskState) error {
+					if billing == nil {
+						delete(d.Billing, auth.ID)
+						return nil
+					}
+					if d.Billing == nil {
+						d.Billing = map[string]Billing{}
+					}
+					d.Billing[auth.ID] = *billing
+					return nil
+				}) {
+					return
+				}
+			}
+			if b.Enabled != nil {
+				auth.Disabled = !*b.Enabled
+				if _, e := a.core.Update(c.Request.Context(), auth); e != nil {
+					fail(c, 500, "Could not update account.")
+					return
+				}
 			}
 		}
 		c.JSON(200, gin.H{"ok": true})
