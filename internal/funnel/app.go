@@ -221,6 +221,10 @@ func (a *App) dashboard(c *gin.Context) {
 		a.requestLogs(c)
 		return
 	}
+	if p == "quota-history" && m == "GET" {
+		c.JSON(200, a.store.read().QuotaHistory)
+		return
+	}
 	if p == "state" && m == "GET" {
 		a.state(c)
 		return

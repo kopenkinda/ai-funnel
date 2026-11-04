@@ -296,6 +296,9 @@ func (a *App) refreshAccount(ctx context.Context, conn Connection, auth *core.Au
 			return nil
 		}
 		d.Snapshots[auth.ID] = snap
+		if snap.Error == "" {
+			d.recordQuota(auth.ID, snap.Quotas, snap.At)
+		}
 		return nil
 	})
 }

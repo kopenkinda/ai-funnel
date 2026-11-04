@@ -6,6 +6,7 @@ import {
   Add01Icon,
   ArrowUpRight01Icon,
   Cancel01Icon,
+  ChartLineData02Icon,
   Delete02Icon,
   Key01Icon,
   Layers01Icon,
@@ -33,6 +34,7 @@ import { KeyManager, KeyUsageSummary } from "./keys";
 import { ActivityLog } from "./activity";
 import { DashboardSettings } from "./settings";
 import { UsageOverview } from "./usage.tsx";
+import { QuotaManagement } from "./quota.tsx";
 import { monthlyCost } from "./billing.tsx";
 import { PrivacyButton, PrivateText } from "./privacy.tsx";
 import { ConnectionDetails, ConnectionForm, KeyForm } from "./forms.tsx";
@@ -79,6 +81,13 @@ import {
 
 const tabs = [
   { id: "pool", path: "/usage", name: "Usage", icon: Layers01Icon },
+  {
+    id: "quota",
+    path: "/quota",
+    name: "Quota",
+    title: "Quota management",
+    icon: ChartLineData02Icon,
+  },
   {
     id: "connections",
     path: "/connections",
@@ -223,7 +232,8 @@ function Dashboard({ tab }: { tab: Tab }) {
       />
     );
 
-  const title = tabs.find((t) => t.id === tab)!.name;
+  const current = tabs.find((t) => t.id === tab)!;
+  const title = "title" in current ? current.title : current.name;
   const openKey = () => setModal("key");
 
   return (
@@ -246,7 +256,7 @@ function Dashboard({ tab }: { tab: Tab }) {
               {title}
             </h1>
             <div className="flex items-center gap-2">
-              {tab === "pool" && (
+              {(tab === "pool" || tab === "quota") && (
                 <Button
                   variant="outline"
                   disabled={!!busy}
@@ -314,6 +324,7 @@ function Dashboard({ tab }: { tab: Tab }) {
                 </EmptyHeader>
               </Empty>
             ))}
+          {tab === "quota" && <QuotaManagement connections={connected} />}
           {tab === "connections" && (
             <div className="flex min-w-0 flex-col gap-6">
               {[true, false].map((enabled) => {

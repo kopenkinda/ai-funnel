@@ -107,6 +107,8 @@ type diskState struct {
 	Hourly     map[string]DailyUsage  `json:"hourly"`
 	KeyUsage   map[string]UsageTotals `json:"keyUsage"`
 	TrackingAt *time.Time             `json:"trackingAt,omitempty"`
+	// Keyed by account ID; see recordQuota.
+	QuotaHistory map[string]QuotaHistory `json:"quotaHistory,omitempty"`
 }
 type Store struct {
 	mu     sync.Mutex
@@ -369,7 +371,12 @@ func (s *Store) Save(_ context.Context, a *core.Auth) (string, error) {
 	return "encrypted:" + a.ID, e
 }
 func (s *Store) Delete(_ context.Context, id string) error {
-	return s.change(func(d *diskState) error { delete(d.Auths, id); delete(d.Billing, id); return nil })
+	return s.change(func(d *diskState) error {
+		delete(d.Auths, id)
+		delete(d.Billing, id)
+		delete(d.QuotaHistory, id)
+		return nil
+	})
 }
 func usageID(id string) string { return now().Format("2006-01-02") + ":" + id }
 
