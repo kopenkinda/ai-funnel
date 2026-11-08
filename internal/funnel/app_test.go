@@ -1076,6 +1076,51 @@ func TestEmbeddedService(t *testing.T) {
 			t.Fatal("original credential did not work after restore and enable", status)
 		}
 	})
+	t.Run("archived accounts leave the pool and restore paused", func(t *testing.T) {
+		const endpoint = "/api/accounts/account-b%40example.com.json"
+		lists := func() (active, archived []Account) {
+			_, b := request("GET", "/api/state", admin, "")
+			var state struct {
+				Connections []struct {
+					Accounts         []Account `json:"accounts"`
+					ArchivedAccounts []Account `json:"archivedAccounts"`
+				}
+			}
+			_ = json.Unmarshal(b, &state)
+			for _, c := range state.Connections {
+				active = append(active, c.Accounts...)
+				archived = append(archived, c.ArchivedAccounts...)
+			}
+			return
+		}
+		find := func(accounts []Account) *Account {
+			for i := range accounts {
+				if accounts[i].ID == "account-b@example.com.json" {
+					return &accounts[i]
+				}
+			}
+			return nil
+		}
+		if status, b := request("PATCH", endpoint, admin, `{"archived":true}`); status != 200 {
+			t.Fatalf("archive %d %s", status, b)
+		}
+		if active, archived := lists(); find(active) != nil || find(archived) == nil {
+			t.Fatal("archived account still listed as active")
+		}
+		if status, _ := request("POST", path, key, payload); status < 400 {
+			t.Fatal("archived account still routed", status)
+		}
+		if status, _ := request("PATCH", endpoint, admin, `{"archived":false}`); status != 200 {
+			t.Fatal(status)
+		}
+		active, _ := lists()
+		if a := find(active); a == nil || a.Status != "paused" {
+			t.Fatal("restored account missing or not paused")
+		}
+		if status, _ := request("PATCH", endpoint, admin, `{"enabled":true}`); status != 200 {
+			t.Fatal(status)
+		}
+	})
 	t.Run("paused and deleted assignments fail closed", func(t *testing.T) {
 		status, b := request("PATCH", "/api/accounts/account-b%40example.com.json", admin, `{"enabled":false}`)
 		if status != 200 {

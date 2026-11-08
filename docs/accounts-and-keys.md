@@ -14,11 +14,15 @@ Gemini, Vertex AI, Grok and the other CLIProxyAPI providers appear under **Unsup
 
 ## Quotas
 
-**Manage** on a connection opens two tabs. **Accounts** lists its accounts and lets you pause or resume each one. **Setup** shows the base URL and client configuration. **Refresh** reads quotas from each provider, and background reads run every two minutes. Quotas the provider does not report stay unknown. A failed read keeps the previous value with its timestamp. The dashboard reloads cached metadata every 30 seconds.
+**Manage** on a connection opens two tabs. **Accounts** lists its accounts and lets you pause, resume or archive each one. **Setup** shows the base URL and client configuration. **Refresh** reads quotas from each provider, and background reads run every two minutes. Quotas the provider does not report stay unknown. A failed read keeps the previous value with its timestamp. The dashboard reloads cached metadata every 30 seconds.
 
 Account rows show plan multipliers and any status other than healthy.
 
 The refresh button on an account row in **Manage → Accounts** reads that account's quotas again.
+
+### Archiving accounts
+
+The archive button on an account row pauses the account and moves it under **Archived accounts** at the bottom of the tab. Archived accounts leave the dashboard, pool projections, monthly totals, key editors and the usage hub, and their quotas are no longer read in the background. Their payment cycle, quota history and request history are kept. **Restore** brings an account back paused, so resume it or sign in again when you want it used. Anything that resumes an archived account also takes it out of the archive, so a hidden account never serves requests.
 
 ### Signing in again
 

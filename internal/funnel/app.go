@@ -402,16 +402,22 @@ func (a *App) dashboard(c *gin.Context) {
 			a.core.Remove(c.Request.Context(), auth.ID)
 		} else {
 			var b struct {
-				Enabled *bool `json:"enabled"`
+				Enabled  *bool `json:"enabled"`
+				Archived *bool `json:"archived"`
 				// Absent leaves billing unchanged; null clears it.
 				Billing json.RawMessage `json:"billing"`
 			}
 			if !decode(c, &b) {
 				return
 			}
-			if b.Enabled == nil && b.Billing == nil {
+			if b.Enabled == nil && b.Archived == nil && b.Billing == nil {
 				fail(c, 400, "Supply the account state or billing.")
 				return
+			}
+			if b.Archived != nil && *b.Archived {
+				// Archiving pauses first; restoring leaves the account paused.
+				paused := false
+				b.Enabled = &paused
 			}
 			if b.Billing != nil {
 				var billing *Billing
@@ -439,6 +445,19 @@ func (a *App) dashboard(c *gin.Context) {
 					fail(c, 500, "Could not update account.")
 					return
 				}
+			}
+			if b.Archived != nil && !a.save(c, func(d *diskState) error {
+				if !*b.Archived {
+					delete(d.Archived, auth.ID)
+					return nil
+				}
+				if d.Archived == nil {
+					d.Archived = map[string]bool{}
+				}
+				d.Archived[auth.ID] = true
+				return nil
+			}) {
+				return
 			}
 		}
 		c.JSON(200, gin.H{"ok": true})

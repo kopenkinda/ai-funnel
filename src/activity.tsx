@@ -170,7 +170,10 @@ export function ActivityLog({
       clearTimeout(timer);
     };
   }, [query, refreshId]);
-  const accounts = connections.flatMap((c) => c.accounts);
+  const accounts = connections.flatMap((c) => [
+    ...c.accounts,
+    ...c.archivedAccounts,
+  ]);
   const connected = providers.filter((p) =>
     connections.some((c) => c.provider === p),
   );

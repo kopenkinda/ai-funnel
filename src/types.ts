@@ -46,6 +46,8 @@ export interface PublicConnection {
   name: string;
   enabled: boolean;
   accounts: Account[];
+  // Paused and kept for history; excluded from pools, totals and routing.
+  archivedAccounts: Account[];
   models: string[];
   syncedAt: string | null;
   error: string | null;

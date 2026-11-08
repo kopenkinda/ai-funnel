@@ -55,7 +55,7 @@ func (a *App) hubAccess(value string) (hubAccess, bool) {
 // visible follows the key's grants, not live routing eligibility, so quota stays
 // visible while an account is exhausted or the key is paused.
 func (h hubAccess) visible(auth *core.Auth) bool {
-	if auth.Provider != "codex" && auth.Provider != "claude" {
+	if (auth.Provider != "codex" && auth.Provider != "claude") || h.d.Archived[auth.ID] {
 		return false
 	}
 	if h.key == nil {

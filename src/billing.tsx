@@ -1,12 +1,23 @@
 import { useState, type FormEvent } from "react";
 import { HugeiconsIcon as Icon } from "@hugeicons/react";
-import { Refresh01Icon } from "@hugeicons/core-free-icons";
+import {
+  Archive01Icon,
+  ArchiveRestoreIcon,
+  ArrowRight01Icon,
+  Refresh01Icon,
+} from "@hugeicons/core-free-icons";
 import type { Account, Billing, PublicConnection } from "./types.ts";
 import { api } from "./api.ts";
 import { ErrorMessage } from "./ui.tsx";
 import { PrivateText } from "./privacy.tsx";
 import { PlanBadge } from "./accounts.tsx";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -114,101 +125,149 @@ export function AccountsPanel({
     .sort((x, y) => x.at.getTime() - y.at.getTime())[0];
   const total = monthlyCost(c.accounts);
   const lastCurrency = c.accounts.find((a) => a.billing)?.billing!.currency;
+  const row = (account: Account, archived = false) => {
+    const paused = account.status === "paused";
+    const signedOut = account.status === "signed_out";
+    const name = account.email || account.name;
+    const b = account.billing;
+    return (
+      <div
+        key={account.id}
+        className="flex flex-col gap-3 border-b py-3 last:border-0"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-medium">
+                <PrivateText>{name}</PrivateText>
+              </span>
+              <PlanBadge
+                plan={account.planTier || account.plan}
+                provider={c.provider}
+              />
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {signedOut && (
+                <span className="text-destructive">Signed out · </span>
+              )}
+              {paused && <span className="text-warning">Paused · </span>}
+              {b
+                ? `${money(b.amount, b.currency)} ${b.interval === "year" ? "yearly" : "monthly"} · next ${due(nextPayment(b))}`
+                : "No payment cycle"}
+            </span>
+          </div>
+          {archived ? (
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label={`Restore ${name}`}
+              disabled={busy === account.id}
+              onClick={() =>
+                void send(account, "PATCH", "", { archived: false })
+              }
+            >
+              {busy === account.id ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Icon icon={ArchiveRestoreIcon} data-icon="inline-start" />
+              )}
+              Restore
+            </Button>
+          ) : (
+            <div className="flex shrink-0 items-center gap-1">
+              {editing !== account.id && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`${b ? "Edit" : "Set"} payment for ${name}`}
+                  onClick={() => {
+                    setError("");
+                    setEditing(account.id);
+                  }}
+                >
+                  {b ? "Edit payment" : "Set payment"}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Refetch ${name}`}
+                disabled={busy === account.id}
+                onClick={() => void send(account, "POST", "/sync")}
+              >
+                {busy === account.id ? (
+                  <Spinner />
+                ) : (
+                  <Icon icon={Refresh01Icon} />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Archive ${name}`}
+                title="Archive"
+                disabled={busy === account.id}
+                onClick={() =>
+                  void send(account, "PATCH", "", { archived: true })
+                }
+              >
+                <Icon icon={Archive01Icon} />
+              </Button>
+              {signedOut ? (
+                <Button size="sm" onClick={() => onSignIn(account)}>
+                  Sign in again
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy === account.id}
+                  onClick={() =>
+                    void send(account, "PATCH", "", { enabled: paused })
+                  }
+                >
+                  {paused ? "Resume" : "Pause"}
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+        {!archived && editing === account.id && (
+          <BillingForm
+            billing={b}
+            defaultCurrency={lastCurrency}
+            busy={busy === account.id}
+            onCancel={() => setEditing(null)}
+            onSave={async (billing) => {
+              if (await send(account, "PATCH", "", { billing }))
+                setEditing(null);
+            }}
+          />
+        )}
+      </div>
+    );
+  };
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col" aria-label="Manage accounts">
-        {c.accounts.map((account) => {
-          const paused = account.status === "paused";
-          const signedOut = account.status === "signed_out";
-          const name = account.email || account.name;
-          const b = account.billing;
-          return (
-            <div
-              key={account.id}
-              className="flex flex-col gap-3 border-b py-3 last:border-0"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 flex-col gap-0.5">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium">
-                      <PrivateText>{name}</PrivateText>
-                    </span>
-                    <PlanBadge
-                      plan={account.planTier || account.plan}
-                      provider={c.provider}
-                    />
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {signedOut && (
-                      <span className="text-destructive">Signed out · </span>
-                    )}
-                    {paused && <span className="text-warning">Paused · </span>}
-                    {b
-                      ? `${money(b.amount, b.currency)} ${b.interval === "year" ? "yearly" : "monthly"} · next ${due(nextPayment(b))}`
-                      : "No payment cycle"}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {editing !== account.id && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`${b ? "Edit" : "Set"} payment for ${name}`}
-                      onClick={() => {
-                        setError("");
-                        setEditing(account.id);
-                      }}
-                    >
-                      {b ? "Edit payment" : "Set payment"}
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Refetch ${name}`}
-                    disabled={busy === account.id}
-                    onClick={() => void send(account, "POST", "/sync")}
-                  >
-                    {busy === account.id ? (
-                      <Spinner />
-                    ) : (
-                      <Icon icon={Refresh01Icon} />
-                    )}
-                  </Button>
-                  {signedOut ? (
-                    <Button size="sm" onClick={() => onSignIn(account)}>
-                      Sign in again
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={busy === account.id}
-                      onClick={() =>
-                        void send(account, "PATCH", "", { enabled: paused })
-                      }
-                    >
-                      {paused ? "Resume" : "Pause"}
-                    </Button>
-                  )}
-                </div>
-              </div>
-              {editing === account.id && (
-                <BillingForm
-                  billing={b}
-                  defaultCurrency={lastCurrency}
-                  busy={busy === account.id}
-                  onCancel={() => setEditing(null)}
-                  onSave={async (billing) => {
-                    if (await send(account, "PATCH", "", { billing }))
-                      setEditing(null);
-                  }}
-                />
-              )}
-            </div>
-          );
-        })}
+        {c.accounts.map((account) => row(account))}
       </div>
+      {c.archivedAccounts.length > 0 && (
+        <Collapsible className="group/archived flex flex-col">
+          <CollapsibleTrigger className="-mx-2 flex items-center gap-2 rounded-xl px-2 py-1 text-left text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring">
+            <Icon
+              icon={ArrowRight01Icon}
+              size={14}
+              className="shrink-0 text-muted-foreground transition-transform group-data-open/archived:rotate-90"
+            />
+            <span className="text-muted-foreground">Archived accounts</span>
+            <Badge variant="secondary">{c.archivedAccounts.length}</Badge>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="flex flex-col">
+            {c.archivedAccounts.map((account) => row(account, true))}
+          </CollapsibleContent>
+        </Collapsible>
+      )}
       {error && <ErrorMessage>{error}</ErrorMessage>}
       {upcoming && (
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-2xl bg-muted/40 px-4 py-3 text-sm">

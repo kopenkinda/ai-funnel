@@ -98,7 +98,7 @@ func (a *App) providerModels(ctx context.Context, provider string, accountIDs []
 
 func str(v any) string { s, _ := v.(string); return s }
 func (a *App) publicConnection(conn Connection) gin.H {
-	accounts := []Account{}
+	accounts, archived := []Account{}, []Account{}
 	models, _ := a.providerModels(context.Background(), conn.Provider, nil)
 	d := a.store.read()
 	var synced *time.Time
@@ -177,12 +177,18 @@ func (a *App) publicConnection(conn Connection) gin.H {
 		if b, ok := d.Billing[auth.ID]; ok {
 			billing = &b
 		}
-		accounts = append(accounts, Account{ID: auth.ID, Name: name, Email: email, Plan: plan, PlanTier: tier, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits, Billing: billing})
+		account := Account{ID: auth.ID, Name: name, Email: email, Plan: plan, PlanTier: tier, Status: status, Quotas: quotas, QuotaError: snap.Error, ResetCredits: snap.ResetCredits, Billing: billing}
+		if d.Archived[auth.ID] {
+			archived = append(archived, account)
+		} else {
+			accounts = append(accounts, account)
+		}
 
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
+	sort.Slice(archived, func(i, j int) bool { return archived[i].ID < archived[j].ID })
 	sort.Strings(models)
-	return gin.H{"id": conn.ID, "provider": conn.Provider, "name": conn.Name, "enabled": conn.Enabled, "createdAt": conn.CreatedAt, "accounts": accounts, "models": models, "syncedAt": synced, "error": nil, "hasApiKey": true, "hasManagementAccess": true}
+	return gin.H{"id": conn.ID, "provider": conn.Provider, "name": conn.Name, "enabled": conn.Enabled, "createdAt": conn.CreatedAt, "accounts": accounts, "archivedAccounts": archived, "models": models, "syncedAt": synced, "error": nil, "hasApiKey": true, "hasManagementAccess": true}
 }
 func parseQuota(label string, window map[string]any, percentField, resetField string, used bool) Quota {
 	q := Quota{Label: label}
@@ -206,8 +212,9 @@ func parseQuota(label string, window map[string]any, percentField, resetField st
 }
 func object(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func (a *App) refresh(ctx context.Context, conn Connection) {
+	archived := a.store.read().Archived
 	for _, auth := range a.core.List() {
-		if auth.Provider == conn.Provider {
+		if auth.Provider == conn.Provider && !archived[auth.ID] {
 			a.refreshAccount(ctx, conn, auth)
 		}
 	}

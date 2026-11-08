@@ -99,7 +99,9 @@ type diskState struct {
 	Keys          map[string]Key          `json:"keys"`
 	Auths         map[string]*core.Auth   `json:"auths"`
 	// Kept outside SDK auth records so token refreshes and re-imports cannot drop it.
-	Billing    map[string]Billing     `json:"billing,omitempty"`
+	Billing map[string]Billing `json:"billing,omitempty"`
+	// Archived accounts are always paused and hidden from pools, routing and the hub.
+	Archived   map[string]bool        `json:"archived,omitempty"`
 	Sessions   map[string]time.Time   `json:"sessions"`
 	Usage      map[string]int         `json:"usage"`
 	Requests   []RequestLog           `json:"requests"`
@@ -359,6 +361,11 @@ func (s *Store) Save(_ context.Context, a *core.Auth) (string, error) {
 				copy.Metadata = a.CodexRefreshPatch.Apply(previous.Metadata)
 			}
 		}
+		// Archive implies paused, so a save that enables the account (a new login
+		// or resume) brings it back rather than leaving a hidden account routing.
+		if !copy.Disabled {
+			delete(d.Archived, copy.ID)
+		}
 		d.Auths[a.ID] = &copy
 		return nil
 	})
@@ -374,6 +381,7 @@ func (s *Store) Delete(_ context.Context, id string) error {
 	return s.change(func(d *diskState) error {
 		delete(d.Auths, id)
 		delete(d.Billing, id)
+		delete(d.Archived, id)
 		delete(d.QuotaHistory, id)
 		return nil
 	})
