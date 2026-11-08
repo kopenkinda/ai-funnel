@@ -299,6 +299,10 @@ function Dashboard({ tab }: { tab: Tab }) {
               <UsageOverview
                 connections={connected}
                 onReconnect={(c) => setAccountProvider(c.provider)}
+                onSignIn={(account, provider) => {
+                  setReauth(account);
+                  setAccountProvider(provider);
+                }}
                 onReset={(account, creditId) =>
                   action(`reset:${account.id}`, async () => {
                     const { result } = await api<{ result: string }>(

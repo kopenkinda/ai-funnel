@@ -40,9 +40,11 @@ const sentenceCase = (text: string) =>
 export function AccountsTable({
   connections,
   onReset,
+  onSignIn,
 }: {
   connections: PublicConnection[];
   onReset: (account: Account, creditId: string) => Promise<void>;
+  onSignIn: (account: Account) => void;
 }) {
   const privacy = usePrivacy((state) => state.enabled);
   const rows = connections.flatMap((connection) =>
@@ -104,11 +106,17 @@ export function AccountsTable({
                 </div>
               </TableCell>
               <TableCell className="pr-4 text-right">
-                <AccountReset
-                  account={account}
-                  connection={connection}
-                  onReset={onReset}
-                />
+                {account.status === "signed_out" ? (
+                  <Button size="xs" onClick={() => onSignIn(account)}>
+                    Sign in again
+                  </Button>
+                ) : (
+                  <AccountReset
+                    account={account}
+                    connection={connection}
+                    onReset={onReset}
+                  />
+                )}
               </TableCell>
             </TableRow>
           ))}
@@ -249,11 +257,7 @@ function AccountReset({
       <Button
         variant="outline"
         size="xs"
-        disabled={
-          busy ||
-          !connection.enabled ||
-          ["paused", "signed_out"].includes(account.status)
-        }
+        disabled={busy || !connection.enabled || account.status === "paused"}
         onClick={async () => {
           setBusy(true);
           try {
@@ -297,15 +301,19 @@ function AccountStatus({
 }) {
   const status = account.status.toLowerCase();
   const active = ["active", "ready", "connected", "ok"].includes(status);
-  const label = !connection.enabled
-    ? "Paused"
-    : connection.error
-      ? "Sync error"
-      : account.quotaError
-        ? "Quota unavailable"
-        : active
-          ? null
-          : sentenceCase(account.status);
+  // Signed out comes first: it explains a missing quota and has its own action.
+  const label =
+    account.status === "signed_out"
+      ? "Signed out"
+      : !connection.enabled
+        ? "Paused"
+        : connection.error
+          ? "Sync error"
+          : account.quotaError
+            ? "Quota unavailable"
+            : active
+              ? null
+              : sentenceCase(account.status);
   if (!label) return null;
   const warning =
     label === "Paused" ||

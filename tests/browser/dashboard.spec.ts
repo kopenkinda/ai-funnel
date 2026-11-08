@@ -856,6 +856,10 @@ test("account rows keep plans inline and only show exceptional statuses", async 
           resetCredits: claudeCredits,
         },
         account("unknown", "Subscription"),
+        {
+          ...account("signedout", "free", "signed_out"),
+          quotaError: "Unauthorized",
+        },
       ],
     },
   ];
@@ -968,6 +972,18 @@ test("account rows keep plans inline and only show exceptional statuses", async 
     .click();
   await expect(claudeReset.getByRole("button")).toHaveCount(0);
   expect(resetRequests[1].creditId).toBe("grant");
+  const signedOut = claude
+    .getByRole("row")
+    .filter({ hasText: "signedout@example.com" });
+  await expect(
+    signedOut.getByText("Signed out", { exact: true }),
+  ).toBeVisible();
+  await expect(signedOut.getByText("Quota unavailable")).toHaveCount(0);
+  await signedOut
+    .getByRole("button", { name: "Sign in again", exact: true })
+    .click();
+  await expect(page.getByRole("dialog", { name: /^Sign in as/ })).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("heading", { name: "Usage", exact: true }).click();
   await page.screenshot({
     path: "/tmp/ai-funnel-account-rows-desktop.png",

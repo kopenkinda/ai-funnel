@@ -1,7 +1,12 @@
 import { useId } from "react";
 import { useHourCycle } from "./preferences.ts";
 import { Bar, BarChart, XAxis, YAxis } from "recharts";
-import { providerNames, type Account, type PublicConnection } from "./types.ts";
+import {
+  providerNames,
+  type Account,
+  type Provider,
+  type PublicConnection,
+} from "./types.ts";
 import { timeUntil } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { AccountsTable } from "./accounts.tsx";
@@ -37,10 +42,12 @@ export function UsageOverview({
   connections,
   onReconnect,
   onReset,
+  onSignIn,
 }: {
   connections: PublicConnection[];
   onReconnect: (connection: PublicConnection) => void;
   onReset: (account: Account, creditId: string) => Promise<void>;
+  onSignIn: (account: Account, provider: Provider) => void;
 }) {
   return (
     <TooltipProvider>
@@ -102,6 +109,7 @@ export function UsageOverview({
               <AccountsTable
                 connections={providerConnections}
                 onReset={onReset}
+                onSignIn={(account) => onSignIn(account, provider)}
               />
             </section>
           );
