@@ -10,7 +10,7 @@ The owner selected the embedded Go service on 29 October 2026 and removed the co
 
 - Separate provider URLs preserve native formats, errors, tool calls, and HTTP streaming. No silent cross-provider fallback.
 - Account selection, model access, key expiry, pause, and request caps are owned by this service. Every SDK selection and retry remains within the key's provider and account grant.
-- OAuth login and refresh are handled by the embedded CLIProxyAPI SDK, pinned to v8.0.47. Credentials persist in an encrypted local store.
+- OAuth login and refresh are handled by the embedded CLIProxyAPI SDK, pinned to v8.0.63. Credentials persist in an encrypted local store.
 - Raw SDK management and inference routes are unavailable externally. Dashboard authentication is separate from device API keys.
 - Display provider-reported quota windows, percentages, reset times, and freshness. Keep unknown distinct from exhausted. Do not combine allowances across providers.
 - Shared keys can select whole pools or specific accounts. Existing device key strings can be registered with newly selected local permissions.

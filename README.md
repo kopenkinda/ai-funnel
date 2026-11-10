@@ -2,7 +2,7 @@
 
 A self-hosted proxy that pools your Codex and Claude subscription accounts behind your own API keys. It routes Codex and Claude Code requests across your accounts, tracks quota windows, and logs usage per key.
 
-It runs as one Go service. The backend embeds [CLIProxyAPI v8.0.47](https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.47) for provider login, token refresh and request handling, and serves a React dashboard from the same port. Accounts sign in directly here, so there is no separate CLIProxyAPI or codex-lb deployment to run.
+It runs as one Go service. The backend embeds [CLIProxyAPI v8.0.63](https://github.com/router-for-me/CLIProxyAPI/tree/v8.0.63) for provider login, token refresh and request handling, and serves a React dashboard from the same port. Accounts sign in directly here, so there is no separate CLIProxyAPI or codex-lb deployment to run.
 
 ![Usage dashboard with token and estimated cost graphs, Claude and Codex quota windows, and per-account remaining allowance](docs/screenshots/usage.png)
 

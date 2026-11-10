@@ -1,6 +1,6 @@
 # Verification
 
-The backend now embeds CLIProxyAPI v8.0.47 in Go. The React design is retained. The previous Node companion backend and its external-service adapters have been removed. The home deployment uses the local service's encrypted state; no codex-lb migration was needed.
+The backend now embeds CLIProxyAPI v8.0.63 in Go. The React design is retained. The previous Node companion backend and its external-service adapters have been removed. The home deployment uses the local service's encrypted state; no codex-lb migration was needed.
 
 The Go integration test boots the real embedded SDK with isolated encrypted state and controlled provider executors. It checks dashboard authentication, foreign-origin rejection, blocked raw SDK routes, model discovery, native Codex Responses and Claude Messages, streaming, account restrictions, paused/deleted assignments, cross-provider rejection, concurrent daily limits, quota normalization, and encrypted persistence.
 
