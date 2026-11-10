@@ -118,6 +118,45 @@ type Store struct {
 	cipher cipher.AEAD
 	state  diskState
 	Admin  string
+	// Codex refresh receipts. Holding them here keeps the SDK from writing
+	// rotated tokens to plaintext files under the auth directory.
+	refreshMu sync.Mutex
+	refreshes map[string][]byte
+}
+
+// RefreshClaim, RefreshRead and RefreshComplete implement the SDK's Codex
+// refresh journal, so one process never exchanges a refresh token twice.
+func (s *Store) RefreshClaim(_ context.Context, key string) (bool, error) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if _, ok := s.refreshes[key]; ok {
+		return false, nil
+	}
+	if s.refreshes == nil {
+		s.refreshes = map[string][]byte{}
+	}
+	s.refreshes[key] = nil
+	return true, nil
+}
+
+func (s *Store) RefreshRead(_ context.Context, key string) ([]byte, error) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	receipt, ok := s.refreshes[key]
+	if ok && receipt == nil {
+		return []byte(`{"stage":"pending"}`), nil
+	}
+	return append([]byte(nil), receipt...), nil
+}
+
+func (s *Store) RefreshComplete(_ context.Context, key string, receipt []byte) error {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if s.refreshes == nil {
+		s.refreshes = map[string][]byte{}
+	}
+	s.refreshes[key] = append([]byte(nil), receipt...)
+	return nil
 }
 
 func token() string {
