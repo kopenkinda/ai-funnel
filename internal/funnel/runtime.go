@@ -166,6 +166,9 @@ func NewRuntime(store *Store, host string, port int, publicURL, dist string, add
 	cfg.RemoteManagement.AllowRemote = true
 	cfg.RequestLog = false
 	cfg.Codex.UpstreamRequestCompression = true
+	// The SDK's bbolt store would keep replay caches and session identity in
+	// plaintext beside the encrypted store. Its in-memory fallback is enough here.
+	cfg.KVStore.Disabled = true
 	sdkauth.RegisterTokenStore(store)
 	selection := &selector{inputs: store.routingInputs}
 	manager := core.NewManager(store, selection, nil)
