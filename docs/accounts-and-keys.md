@@ -16,7 +16,7 @@ Gemini, Vertex AI, Grok and the other CLIProxyAPI providers appear under **Unsup
 
 **Manage** on a connection opens two tabs. **Accounts** lists its accounts and lets you pause, resume or archive each one. **Setup** shows the base URL and client configuration. **Refresh** reads quotas from each provider, and background reads run every two minutes. Quotas the provider does not report stay unknown. A failed read keeps the previous value with its timestamp. The dashboard reloads cached metadata every 30 seconds.
 
-Account rows show plan multipliers and any status other than healthy.
+Account rows show plan multipliers and any status other than healthy. Paused and signed-out accounts stay listed but are left out of pool projections, since no requests are routed to them.
 
 The refresh button on an account row in **Manage → Accounts** reads that account's quotas again.
 
