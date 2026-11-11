@@ -2,6 +2,7 @@ package funnel
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -68,10 +69,11 @@ func (a *App) accountProviders() map[string]string {
 }
 
 // Share the SDK's account model catalog with native discovery and the key editor.
-func (a *App) providerModels(ctx context.Context, provider string, accountIDs []string) ([]string, error) {
-	models := []string{}
+// names maps ids to the SDK's display names, for clients that label models.
+func (a *App) providerModels(ctx context.Context, provider string, accountIDs []string) (models []string, names map[string]string, err error) {
+	models, names = []string{}, map[string]string{}
 	if a.engine == nil {
-		return models, nil
+		return models, names, nil
 	}
 	for _, auth := range a.core.List() {
 		if auth.Provider != provider || (accountIDs != nil && !contains(accountIDs, auth.ID)) {
@@ -80,26 +82,30 @@ func (a *App) providerModels(ctx context.Context, provider string, accountIDs []
 		w := a.managementCall(ctx, "GET", "/credentials/models?name="+url.QueryEscape(auth.ID), "")
 		var data struct {
 			Models []struct {
-				ID string `json:"id"`
+				ID          string `json:"id"`
+				DisplayName string `json:"display_name"`
 			} `json:"models"`
 		}
 		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &data) != nil {
-			return models, fmt.Errorf("provider model catalog unavailable")
+			return models, names, fmt.Errorf("provider model catalog unavailable")
 		}
 		for _, m := range data.Models {
 			if m.ID != "" && !contains(models, m.ID) {
 				models = append(models, m.ID)
 			}
+			if m.DisplayName != "" && names[m.ID] == "" {
+				names[m.ID] = m.DisplayName
+			}
 		}
 	}
 	sort.Strings(models)
-	return models, nil
+	return models, names, nil
 }
 
 func str(v any) string { s, _ := v.(string); return s }
 func (a *App) publicConnection(conn Connection) gin.H {
 	accounts, archived := []Account{}, []Account{}
-	models, _ := a.providerModels(context.Background(), conn.Provider, nil)
+	models, _, _ := a.providerModels(context.Background(), conn.Provider, nil)
 	d := a.store.read()
 	var synced *time.Time
 	for _, auth := range a.core.List() {
@@ -396,7 +402,7 @@ func (a *App) provider(c *gin.Context) {
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	c.Request.ContentLength = int64(len(body))
 	if c.Request.Method == "GET" {
-		ids, err := a.providerModels(ctx, provider, grant.AccountIDs)
+		ids, names, err := a.providerModels(ctx, provider, grant.AccountIDs)
 		if err != nil {
 			fail(c, 502, "Provider model catalog unavailable.")
 			return
@@ -404,7 +410,12 @@ func (a *App) provider(c *gin.Context) {
 		models := []gin.H{}
 		for _, id := range ids {
 			if grant.Models == nil || contains(grant.Models, id) {
-				models = append(models, gin.H{"id": id, "object": "model"})
+				row := gin.H{"id": id, "object": "model"}
+				if provider == "claude" {
+					// Anthropic's shape. Claude Code's gateway discovery labels /model picker rows with display_name.
+					row = gin.H{"type": "model", "id": id, "display_name": cmp.Or(names[id], id)}
+				}
+				models = append(models, row)
 			}
 		}
 		if provider == "claude" {
