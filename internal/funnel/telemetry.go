@@ -61,6 +61,13 @@ type UsageTotals struct {
 func (v *UsageTotals) add(tokens Tokens, cost Cost) {
 	v.Requests++
 	v.Tokens.add(tokens)
+	v.addCost(cost)
+	if !cost.Priced {
+		v.Unpriced++
+	}
+}
+
+func (v *UsageTotals) addCost(cost Cost) {
 	v.Cost.Min += cost.Min
 	v.Cost.Max += cost.Max
 	v.Cost.Input += cost.Input
@@ -68,9 +75,45 @@ func (v *UsageTotals) add(tokens Tokens, cost Cost) {
 	v.Cost.CacheWrite += cost.CacheWrite
 	v.Cost.Output += cost.Output
 	v.Cost.Reasoning += cost.Reasoning
-	if !cost.Priced {
-		v.Unpriced++
+}
+
+// reprice estimates retained requests that had no price when they completed,
+// so adding a model's price also covers the usage recorded before it. Their
+// totals already count them as unpriced with no cost, so only the cost moves.
+// Requests that were priced keep their original estimate.
+func (d *diskState) reprice() bool {
+	changed := false
+	for i, r := range d.Requests {
+		if r.Tokens == nil || r.Cost == nil || r.Cost.Priced {
+			continue
+		}
+		cost := estimateCost(r.Provider, r.Cost.Model, r.Cost.Tier, *r.Tokens)
+		if !cost.Priced {
+			continue
+		}
+		d.Requests[i].Cost = &cost
+		changed = true
+		at := r.At.UTC()
+		day := at.Format("2006-01-02") + "|" + r.Provider
+		hour := at.Truncate(time.Hour).Format(time.RFC3339) + "|" + r.Provider
+		if v, ok := d.Daily[day]; ok {
+			v.addCost(cost)
+			v.Unpriced--
+			d.Daily[day] = v
+		}
+		// Hours older than two days are already gone.
+		if v, ok := d.Hourly[hour]; ok {
+			v.addCost(cost)
+			v.Unpriced--
+			d.Hourly[hour] = v
+		}
+		if v, ok := d.KeyUsage[r.KeyID]; ok {
+			v.addCost(cost)
+			v.Unpriced--
+			d.KeyUsage[r.KeyID] = v
+		}
 	}
+	return changed
 }
 
 func (d *diskState) addHourly(at time.Time, provider string, tokens Tokens, cost Cost) {

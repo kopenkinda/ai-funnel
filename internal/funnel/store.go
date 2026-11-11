@@ -250,6 +250,11 @@ func NewStore(dir, admin string) (*Store, error) {
 			}
 		}
 	}
+	// Prices ship with the binary, so a restart is when new ones can apply.
+	// Runs after the rebuilds above, which count requests at their stored cost.
+	if s.state.reprice() {
+		upgraded = true
+	}
 	if upgraded && e == nil {
 		if err := s.change(func(*diskState) error { return nil }); err != nil {
 			return nil, err

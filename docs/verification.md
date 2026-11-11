@@ -30,7 +30,7 @@ The usage hub was checked against T3 Code's installed client contract. Tests cov
 
 On 29 October 2026, Codex CLI 0.165.0 returned a greeting through downstream and upstream WebSockets. A native Codex app-server session then completed two turns on the same thread and recalled a word from the first turn. Claude Code 2.1.311 returned a greeting from Sonnet 5.5 through native SSE. The proxy recorded canonical token splits, timings and price estimates for both harnesses. Temporary client keys were deleted after the checks.
 
-Controlled WebSocket tests cover repeated turns, per-turn daily caps and account-assignment changes. Accounting tests cover overlapping OpenAI cache/reasoning counts, independent Claude cache counts, duplicate SDK records, unknown prices and cache-write cost ranges.
+Controlled WebSocket tests cover repeated turns, per-turn daily caps and account-assignment changes. Accounting tests cover overlapping OpenAI cache/reasoning counts, independent Claude cache counts, duplicate SDK records, unknown prices, pricing earlier requests once a model's price is added, and cache-write cost ranges.
 
 The usage/activity Playwright check covers summary token buckets, all six graph periods and their token/cost totals, graph hover details, persisted auto-reset settings, hub-key generation, request search and details, email blur and narrow layout. Storage tests check that history older than 90 days survives new usage and that upgrading existing hourly history neither loses nor duplicates requests on restart. Live hourly totals matched the daily total after upgrade. Headless desktop and mobile screenshots were inspected. Automatic redemption against a real expiring credit remains untested.
 

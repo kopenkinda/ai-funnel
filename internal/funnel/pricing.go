@@ -4,6 +4,7 @@ import "strings"
 
 // USD per million tokens, verified 2026-11-11 against the linked vendor tables.
 // Persist the estimate with the request so later price edits do not rewrite history.
+// Requests that had no price yet are the exception: reprice fills those in at startup.
 const openAIPrices = "https://developers.openai.com/api/docs/pricing"
 const claudePrices = "https://platform.claude.com/docs/en/about-claude/pricing"
 

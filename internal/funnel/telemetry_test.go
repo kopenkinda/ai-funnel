@@ -82,6 +82,52 @@ func TestUsageAccountingAndDeduplication(t *testing.T) {
 	}
 }
 
+func TestUnpricedRequestsArePricedOnRestart(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir, "reprice-test-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{store: store, core: core.NewManager(store, nil, nil)}
+	at := now()
+	a.HandleUsage(context.Background(), sdkusage.Record{RequestID: "early", APIKey: a.usageIdentity("key", "claude", "HTTP", "parent"), Provider: "claude", Model: "claude-next", RequestedAt: at, Detail: sdkusage.Detail{InputTokens: 1000, OutputTokens: 100, TotalTokens: 1100}})
+	if err := store.change(func(d *diskState) error {
+		// Priced under an older table; a restart must not rewrite it.
+		d.Requests = append(d.Requests, RequestLog{ID: "kept", At: at, Provider: "claude", Tokens: &Tokens{Input: 1000, Total: 1000}, Cost: &Cost{Min: .5, Max: .5, Priced: true, Model: "claude-opus-5-5"}})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if d := store.read(); d.Requests[0].Cost.Priced || d.KeyUsage["key"].Unpriced != 1 {
+		t.Fatalf("model without a price was priced: %+v", d.Requests[0].Cost)
+	}
+	prices["claude-next"] = rate{1, 10, .1, 1.25, 2}
+	t.Cleanup(func() { delete(prices, "claude-next") })
+	// The second restart must not add the cost again.
+	for range 2 {
+		store, err = NewStore(dir, "reprice-test-admin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := store.read()
+		if c := d.Requests[0].Cost; !c.Priced || math.Abs(c.Min-.002) > 1e-9 {
+			t.Fatalf("request not priced after its price was added: %+v", c)
+		}
+		if d.Requests[1].Cost.Min != .5 {
+			t.Fatalf("priced request was rewritten: %+v", d.Requests[1].Cost)
+		}
+		for name, totals := range map[string]UsageTotals{
+			"daily":  d.Daily[at.Format("2006-01-02")+"|claude"].UsageTotals,
+			"hourly": d.Hourly[at.Truncate(time.Hour).Format(time.RFC3339)+"|claude"].UsageTotals,
+			"key":    d.KeyUsage["key"],
+		} {
+			if totals.Requests != 1 || totals.Unpriced != 0 || math.Abs(totals.Cost.Min-.002) > 1e-9 {
+				t.Fatalf("%s totals after repricing: %+v", name, totals)
+			}
+		}
+	}
+}
+
 func TestHourlyHistoryUpgrade(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(dir, "hourly-upgrade-admin")
