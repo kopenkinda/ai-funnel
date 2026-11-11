@@ -163,11 +163,9 @@ function BankedResets({ accounts }: { accounts: Account[] }) {
                         : ""}
                   </span>
                 ))}
-              {account.resetCredits!.ineligible && (
+              {account.resetCredits!.ineligible === "cli_version" && (
                 <span className="text-muted-foreground">
-                  {account.resetCredits!.ineligible === "cli_version"
-                    ? "Provider requires a newer client version"
-                    : `Not offered by the provider (${account.resetCredits!.ineligible})`}
+                  Provider requires a newer client version
                 </span>
               )}
               {account.resetCredits!.error && (

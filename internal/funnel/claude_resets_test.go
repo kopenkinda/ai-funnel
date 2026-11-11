@@ -298,11 +298,15 @@ func TestClaudeResetsThroughUsageHub(t *testing.T) {
 	if len(x.requests) != 1 || x.requests[0] != "first" {
 		t.Fatalf("a repeated hub request redeemed again: %v", x.requests)
 	}
-	if status, _, _ := call("sk-hub-global", "claude-account", "POST", redeemURL, map[string]string{"program": "cedar_ember", "grant_id": "other", "request_id": "second"}); status != 200 || len(x.requests) != 1 {
-		t.Fatal("hub redeemed a reset the provider does not list", status)
+	// A cooldown is no verdict: the same request must reach Claude again.
+	x.grant["resets_left"], x.result = 1, "cooldown"
+	for range 2 {
+		if _, upstream, body := call("sk-hub-global", "claude-account", "POST", redeemURL, claim("cooling")); upstream != 502 || body != "" {
+			t.Fatalf("cooldown answered as a result: %d %s", upstream, body)
+		}
 	}
-	if auth, _ := a.core.GetByID("claude-account"); auth.Unavailable {
-		t.Fatal("hub redemption left the account in cooldown")
+	if len(x.requests) != 3 {
+		t.Fatalf("a cooled-down request was not retried upstream: %v", x.requests)
 	}
 }
 

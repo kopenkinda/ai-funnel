@@ -247,9 +247,6 @@ function AccountReset({
 }) {
   const [busy, setBusy] = useState<string>();
   const hourCycle = useHourCycle();
-  // Only Claude credits carry a kind, and only those can be unusable for now.
-  const usable = (credit: { kind?: string; usable_now?: boolean }) =>
-    !credit.kind || credit.usable_now === true;
   const credits = (account.resetCredits?.items ?? [])
     .filter(
       (credit) =>
@@ -259,9 +256,8 @@ function AccountReset({
     )
     .sort(
       (a, b) =>
-        Number(usable(b)) - Number(usable(a)) ||
         (a.expires_at ? Date.parse(a.expires_at) : Infinity) -
-          (b.expires_at ? Date.parse(b.expires_at) : Infinity),
+        (b.expires_at ? Date.parse(b.expires_at) : Infinity),
     );
   // One button per kind, which uses that kind's soonest-expiring credit.
   const kinds = [...new Set(credits.map((credit) => credit.kind))];
@@ -276,14 +272,8 @@ function AccountReset({
             <Button
               variant="outline"
               size="xs"
-              title={
-                usable(credit)
-                  ? undefined
-                  : "The provider can't use this reset right now."
-              }
               disabled={
                 busy !== undefined ||
-                !usable(credit) ||
                 !connection.enabled ||
                 account.status === "paused"
               }

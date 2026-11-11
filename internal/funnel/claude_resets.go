@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,9 +26,8 @@ var (
 // reset refills the Fable allowance and returns its share of the weekly limit.
 func claudeResetKind(raw json.RawMessage) string {
 	var grant struct {
-		Type      string   `json:"type"`
-		Clears    []string `json:"clears"`
-		GivesBack bool     `json:"gives_back_weekly"`
+		Type      string `json:"type"`
+		GivesBack bool   `json:"gives_back_weekly"`
 	}
 	_ = json.Unmarshal(raw, &grant)
 	if grant.GivesBack {
@@ -38,15 +36,7 @@ func claudeResetKind(raw json.RawMessage) string {
 	if grant.Type == "session" || grant.Type == "weekly" || grant.Type == "full" {
 		return grant.Type
 	}
-	session := slices.Contains(grant.Clears, "five_hour")
-	other := slices.ContainsFunc(grant.Clears, func(limit string) bool { return limit != "five_hour" })
-	if session != other {
-		if session {
-			return "session"
-		}
-		return "weekly"
-	}
-	return "full"
+	return ""
 }
 
 // claudeHubGrants rebuilds Claude's reset listing from a cached snapshot for
@@ -57,7 +47,7 @@ func claudeHubGrants(credits *ResetCredits, attempts map[string]ResetAttempt, ac
 		if resetAttemptBlocks(credit, attempts[accountID+"|"+credit.ID]) {
 			continue
 		}
-		grant := gin.H{"id": credit.ID, "resets_left": credit.count(), "usable_now": credit.UsableNow, "paused": false, "type": credit.Kind, "gives_back_weekly": credit.Kind == "fable", "ends_at": nil}
+		grant := gin.H{"id": credit.ID, "resets_left": credit.count(), "usable_now": credit.UsableNow, "type": credit.Kind, "gives_back_weekly": credit.Kind == "fable", "ends_at": nil}
 		if credit.Kind == "fable" {
 			grant["type"] = "full"
 		}

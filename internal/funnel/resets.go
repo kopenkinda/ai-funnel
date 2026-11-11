@@ -126,7 +126,8 @@ func (a *App) redeemLocked(ctx context.Context, auth *core.Auth, creditID, reque
 	key := auth.ID + "|" + creditID
 	d := a.store.read()
 	previous := d.ResetAttempts[key]
-	if previous.Result != "" && ((auth.Provider == "codex" && terminalReset(previous.Result)) || previous.RequestID == requestID) {
+	// A cooldown is not an answer, so the same request asks the provider again.
+	if previous.Result != "" && previous.Result != "cooldown" && ((auth.Provider == "codex" && terminalReset(previous.Result)) || previous.RequestID == requestID) {
 		return previous.Result, 200, ""
 	}
 	credits := a.fetchCredits(ctx, auth, d.Snapshots[auth.ID].ResetCredits)

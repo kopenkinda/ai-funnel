@@ -812,7 +812,6 @@ test("account rows keep plans inline and only show exceptional statuses", async 
         : new Date(Date.now() + hours * 3600000).toISOString(),
     resets_left: 1,
     kind,
-    usable_now: kind ? true : undefined,
   });
   const codexCredits = {
     available: 2,
