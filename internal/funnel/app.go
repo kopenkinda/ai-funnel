@@ -533,5 +533,5 @@ func (a *App) state(c *gin.Context) {
 	for i, v := range logs {
 		reverse[len(logs)-1-i] = v
 	}
-	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL, "daily": d.Daily, "hourly": d.Hourly, "keyUsage": d.KeyUsage, "trackingAt": d.TrackingAt, "pricing": gin.H{"asOf": "2026-10-29", "openai": openAIPrices, "claude": claudePrices}, "settings": gin.H{"autoUseResets": d.Settings.AutoUseResets, "hasHubKey": d.Settings.HubTokenHash != "", "routing": gin.H{"codex": d.Settings.routing("codex"), "claude": d.Settings.routing("claude")}}})
+	c.JSON(200, gin.H{"connections": conns, "keys": keys, "requests": reverse, "publicUrl": a.publicURL, "daily": d.Daily, "hourly": d.Hourly, "keyUsage": d.KeyUsage, "trackingAt": d.TrackingAt, "pricing": gin.H{"asOf": "2026-11-11", "openai": openAIPrices, "claude": claudePrices}, "settings": gin.H{"autoUseResets": d.Settings.AutoUseResets, "hasHubKey": d.Settings.HubTokenHash != "", "routing": gin.H{"codex": d.Settings.routing("codex"), "claude": d.Settings.routing("claude")}}})
 }

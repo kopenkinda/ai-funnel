@@ -2,7 +2,7 @@ package funnel
 
 import "strings"
 
-// USD per million tokens, verified 2026-10-29 against the linked vendor tables.
+// USD per million tokens, verified 2026-11-11 against the linked vendor tables.
 // Persist the estimate with the request so later price edits do not rewrite history.
 const openAIPrices = "https://developers.openai.com/api/docs/pricing"
 const claudePrices = "https://platform.claude.com/docs/en/about-claude/pricing"
@@ -18,6 +18,7 @@ var prices = map[string]rate{
 	"gpt-6.1-terra":     {1, 5, .05, 1.25, 2.5},
 	"gpt-6-luna":        {.1, .5, .01, .125, .25},
 	"gpt-5.6-sol":       {4, 20, .4, 5, 10},
+	"claude-fable-5-2":  {8, 40, .2, 10, 16},
 	"claude-fable-5-1":  {10, 50, .25, 12.5, 20},
 	"claude-fable-5":    {10, 50, 1, 12.5, 20},
 	"claude-opus-5-5":   {4, 20, .2, 5, 8},
@@ -39,7 +40,7 @@ var prices = map[string]rate{
 }
 
 func estimateCost(provider, model, tier string, t Tokens) Cost {
-	c := Cost{Model: model, Tier: tier, Version: "2026-10-29"}
+	c := Cost{Model: model, Tier: tier, Version: "2026-11-11"}
 	if provider != "codex" && provider != "claude" {
 		c.Note = "No verified provider price"
 		return c
@@ -75,7 +76,7 @@ func estimateCost(provider, model, tier string, t Tokens) Cost {
 	case "priority", "fast":
 		if provider == "codex" {
 			multiplier = 2
-		} else if name == "claude-opus-5-5" || name == "claude-opus-5" || name == "claude-opus-4-8" {
+		} else if name == "claude-fable-5-2" || name == "claude-opus-5-5" || name == "claude-opus-5" || name == "claude-opus-4-8" {
 			multiplier = 2
 		} else {
 			c.Note = "Unverified fast-mode price"
