@@ -379,10 +379,12 @@ func (a *App) hubResetQuota(c *gin.Context, id string) {
 	c.JSON(200, gin.H{"ok": true})
 }
 
-// The OAuth usage endpoint can answer 429 without a Claude Code user agent and
-// withholds banked resets from versions it considers old. Account requests
-// therefore present the newest version a connected client has used, starting
-// from the release this was last checked against.
+// The OAuth usage endpoint can answer 429 without a Claude Code user agent, and
+// lists banked resets only for the Claude Code CLI at a version it accepts. Any
+// other agent, even "claude-code/…", is answered ineligible_reason "surface".
+// Account requests therefore identify as the CLI at the newest version a
+// connected client has used, starting from the release this was last checked
+// against.
 var claudeClient = struct {
 	sync.Mutex
 	version [3]int
@@ -410,7 +412,7 @@ func claudeUserAgent() string {
 	claudeClient.Lock()
 	defer claudeClient.Unlock()
 	v := claudeClient.version
-	return fmt.Sprintf("claude-code/%d.%d.%d", v[0], v[1], v[2])
+	return fmt.Sprintf("claude-cli/%d.%d.%d (external, cli)", v[0], v[1], v[2])
 }
 
 // providerHeaders adds what the providers expect from their own clients: the

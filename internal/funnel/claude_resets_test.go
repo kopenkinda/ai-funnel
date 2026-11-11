@@ -319,7 +319,7 @@ func TestAccountRequestsFollowNewestClaudeClient(t *testing.T) {
 	}
 	r, _ := http.NewRequest("GET", claudeResetUsageURL, nil)
 	providerHeaders(r, &core.Auth{Provider: "claude"})
-	if got := r.Header.Get("User-Agent"); got != "claude-code/2.2.4" {
+	if got := r.Header.Get("User-Agent"); got != "claude-cli/2.2.4 (external, cli)" {
 		t.Fatalf("account requests present %q, want the newest connected client", got)
 	}
 }

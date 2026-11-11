@@ -42,7 +42,7 @@ Under **Manage → Accounts**, **Set payment** records an account's subscription
 
 Claude grants must be usable, and grants without an expiry are shown but never redeemed automatically. Codex uses T3 Code's deterministic request ID. Claude stores one request ID per redemption, reuses it for unconfirmed requests after restarts, and waits for the remaining count to drop before using another reset from the same grant. A successful redemption clears the account's local cooldown. The banked-reset badge shows counts and expiry details.
 
-Claude lists resets only for recent Claude Code versions. Account requests present the newest version a connected Claude client has used, so keeping clients updated keeps resets visible. When Claude wants a newer version than that, the banked-reset badge says so.
+Claude lists resets only for its own CLI, and can require a recent version. Account requests identify as the Claude Code CLI at the newest version a connected Claude client has used, so keeping clients updated keeps resets visible. When Claude wants a newer version than that, the banked-reset badge says so.
 
 ## API keys
 
