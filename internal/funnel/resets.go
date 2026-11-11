@@ -17,6 +17,7 @@ type ResetCredit struct {
 	ID        string        `json:"id"`
 	Status    string        `json:"status"`
 	ResetType string        `json:"reset_type"`
+	Kind      string        `json:"kind,omitempty"`
 	ExpiresAt *time.Time    `json:"expires_at,omitempty"`
 	Remaining *int          `json:"resets_left,omitempty"`
 	UsableNow bool          `json:"usable_now,omitempty"`
@@ -104,62 +105,70 @@ func (a *App) resetAccount(c *gin.Context, id string) {
 		fail(c, 404, "Account unavailable.")
 		return
 	}
-	d := a.store.read()
-	conn := d.Connections[auth.Provider]
+	conn := a.store.read().Connections[auth.Provider]
 	if !conn.Enabled {
 		fail(c, 409, "This connection is paused.")
 		return
 	}
-	previous := d.ResetAttempts[id+"|"+b.CreditID]
-	if previous.Result != "" && ((auth.Provider == "codex" && terminalReset(previous.Result)) || previous.RequestID == b.RequestID) {
-		c.JSON(200, gin.H{"result": previous.Result})
+	result, status, message := a.redeemLocked(c.Request.Context(), auth, b.CreditID, b.RequestID)
+	if status != 200 {
+		fail(c, status, message)
 		return
 	}
-	credits := a.fetchCredits(c.Request.Context(), auth, d.Snapshots[id].ResetCredits)
-	if !a.save(c, func(d *diskState) error {
-		snap := d.Snapshots[id]
+	a.refresh(c.Request.Context(), conn)
+	c.JSON(200, gin.H{"result": result})
+}
+
+// redeemLocked redeems the banked reset the caller chose, after checking it
+// against a fresh provider listing. The caller holds resetMu. Any status other
+// than 200 comes with the message to show.
+func (a *App) redeemLocked(ctx context.Context, auth *core.Auth, creditID, requestID string) (string, int, string) {
+	key := auth.ID + "|" + creditID
+	d := a.store.read()
+	previous := d.ResetAttempts[key]
+	// A cooldown is not an answer, so the same request asks the provider again.
+	if previous.Result != "" && previous.Result != "cooldown" && ((auth.Provider == "codex" && terminalReset(previous.Result)) || previous.RequestID == requestID) {
+		return previous.Result, 200, ""
+	}
+	credits := a.fetchCredits(ctx, auth, d.Snapshots[auth.ID].ResetCredits)
+	if err := a.store.change(func(d *diskState) error {
+		snap := d.Snapshots[auth.ID]
 		snap.ResetCredits = credits
-		d.Snapshots[id] = snap
+		d.Snapshots[auth.ID] = snap
 		return nil
-	}) {
-		return
+	}); err != nil {
+		return "", 500, "Could not save application state."
 	}
 	if credits.Error != "" {
-		fail(c, 502, "Banked reset lookup unavailable.")
-		return
+		return "", 502, "Banked reset lookup unavailable."
 	}
 	var selected *ResetCredit
 	for _, credit := range activeCredits(credits.Items, now()) {
-		if credit.ID == b.CreditID && !resetAttemptBlocks(credit, previous) {
+		if credit.ID == creditID && !resetAttemptBlocks(credit, previous) {
 			selected = &credit
 			break
 		}
 	}
 	if selected == nil {
-		fail(c, 409, "This banked reset is no longer available.")
-		return
+		return "", 409, "This banked reset is no longer available."
 	}
 	var err error
 	if auth.Provider == "claude" {
 		if !selected.UsableNow {
-			fail(c, 409, "The provider cannot use this reset right now.")
-			return
+			return "", 409, "The provider cannot use this reset right now."
 		}
-		err = a.consumeClaudeResetLocked(c.Request.Context(), auth, *selected, b.RequestID)
+		err = a.consumeClaudeResetLocked(ctx, auth, *selected, requestID)
 	} else {
-		_, _, err = a.consumeResetLocked(c.Request.Context(), auth, selected.ID)
+		_, _, err = a.consumeResetLocked(ctx, auth, selected.ID)
 	}
 	if err != nil {
-		fail(c, 502, "Provider reset request failed.")
-		return
+		return "", 502, "Provider reset request failed."
 	}
-	result := a.store.read().ResetAttempts[id+"|"+b.CreditID].Result
+	result := a.store.read().ResetAttempts[key].Result
 	if result == "" {
-		fail(c, 409, "The reset could not be applied. Refresh and try again.")
-		return
+		return "", 409, "The reset could not be applied. Refresh and try again."
 	}
-	a.refresh(c.Request.Context(), conn)
-	c.JSON(200, gin.H{"result": result})
+	return result, 200, ""
 }
 
 func (a *App) consumeReset(ctx context.Context, auth *core.Auth, creditID string) (int, []byte, error) {

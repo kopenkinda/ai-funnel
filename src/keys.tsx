@@ -304,7 +304,7 @@ const hubSettings: { id: HubSetting; label: string; description: string }[] = [
     id: "hubResets",
     label: "Allow reset redemption",
     description:
-      "Lets the hub redeem banked Codex resets while this key and its connection are active.",
+      "Lets the hub redeem banked Codex and Claude resets while this key and its connection are active.",
   },
 ];
 

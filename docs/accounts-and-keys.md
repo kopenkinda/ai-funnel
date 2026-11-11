@@ -36,11 +36,13 @@ Under **Manage → Accounts**, **Set payment** records an account's subscription
 
 ## Banked resets
 
-**Use reset** redeems the displayed banked credit, with its expiry shown underneath. It works for Codex and Claude and is independent of automatic redemption.
+**Use reset** redeems the displayed banked credit, with its expiry shown underneath. It works for Codex and Claude and is independent of automatic redemption. Claude banks different kinds of reset (5-hour, weekly, Fable and full), so a Claude account gets one button per kind it holds. Each uses that kind's soonest-expiring grant.
 
 **Settings → Use expiring banked resets** redeems Codex and Claude credits during their final five minutes. It is off by default and the setting is stored on the server. While the service runs, the scheduler checks every 15 seconds, refreshes credit status before redeeming, and retries temporary failures or `nothing_to_reset` every 30 seconds until expiry.
 
 Claude grants must be usable, and grants without an expiry are shown but never redeemed automatically. Codex uses T3 Code's deterministic request ID. Claude stores one request ID per redemption, reuses it for unconfirmed requests after restarts, and waits for the remaining count to drop before using another reset from the same grant. A successful redemption clears the account's local cooldown. The banked-reset badge shows counts and expiry details.
+
+Claude lists resets only for recent Claude Code versions. Account requests present the newest version a connected Claude client has used, so keeping clients updated keeps resets visible. When Claude wants a newer version than that, the banked-reset badge says so.
 
 ## API keys
 
@@ -73,9 +75,14 @@ To share usage for one client key only, open the key under **API keys** and choo
 - lists only the accounts assigned by the key's grants, under opaque IDs, and skips paused accounts;
 - labels accounts as `Codex account 1a2b3c` unless **Show account emails** is on, and never shares ChatGPT workspace IDs;
 - serves the funnel's cached usage snapshots, reduced to the quota windows T3 Code reads, so it never makes provider calls for reads;
-- lists and redeems banked Codex resets only with **Allow reset redemption** on, while the key and its connection are active;
+- lists and redeems banked Codex and Claude resets only with **Allow reset redemption** on, while the key and its connection are active;
 - keeps showing usage while the key is paused, stops working when the key expires or is archived, and is cleared on archive.
 
 The global hub key in **Settings** sees every account with live provider reads and can redeem resets on any running connection.
 
-The hub exposes `/v0/management/auth-files`, `/v0/management/reset-quota` and a scoped `/v0/management/api-call` for the official Codex and Claude usage endpoints and Codex reset-credit operations. It does not expose raw SDK management, credentials or arbitrary outbound requests.
+The hub exposes `/v0/management/auth-files`, `/v0/management/reset-quota` and a scoped `/v0/management/api-call` for the official Codex and Claude usage endpoints and their reset operations. It does not expose raw SDK management, credentials or arbitrary outbound requests.
+
+Claude resets use Claude's own endpoints through `api-call`, so a hub client can list them, choose one and redeem it:
+
+- `GET https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1` returns usage with the `cedar_ember` reset listing. A bearer that may not redeem gets usage without it.
+- `POST https://api.anthropic.com/api/organizations/{organization}/reset_rate_limits` with `{"program":"cedar_ember","grant_id":"…","request_id":"…"}` redeems the chosen grant and answers `{"result":"reset"}`, `already_used`, `not_limited` or `ineligible`. Any organization value works, because the funnel uses the account's own. Repeating a `request_id` returns the first answer without redeeming again.

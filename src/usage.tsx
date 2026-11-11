@@ -9,7 +9,7 @@ import {
 } from "./types.ts";
 import { timeUntil } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
-import { AccountsTable } from "./accounts.tsx";
+import { AccountsTable, resetKinds } from "./accounts.tsx";
 import { PrivateText } from "./privacy.tsx";
 import { compareQuotaLabels } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -152,6 +152,7 @@ function BankedResets({ accounts }: { accounts: Account[] }) {
                 .map((credit) => (
                   <span key={credit.id} className="text-muted-foreground">
                     {credit.resets_left != null && `${credit.resets_left} × `}
+                    {credit.kind && `${resetKinds[credit.kind]} · `}
                     {credit.expires_at
                       ? `Use by ${new Date(credit.expires_at).toLocaleString(undefined, { hourCycle })}`
                       : "No expiry"}
@@ -162,6 +163,11 @@ function BankedResets({ accounts }: { accounts: Account[] }) {
                         : ""}
                   </span>
                 ))}
+              {account.resetCredits!.ineligible === "cli_version" && (
+                <span className="text-muted-foreground">
+                  Provider requires a newer client version
+                </span>
+              )}
               {account.resetCredits!.error && (
                 <span className="text-destructive">
                   {account.resetCredits!.error}

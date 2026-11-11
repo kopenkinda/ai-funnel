@@ -42,6 +42,7 @@ type ResetCredits struct {
 	Items      []ResetCredit `json:"items,omitempty"`
 	CheckedAt  *time.Time    `json:"checkedAt,omitempty"`
 	Error      string        `json:"error,omitempty"`
+	Ineligible string        `json:"ineligible,omitempty"`
 	Available  int           `json:"available"`
 	Applicable *int          `json:"applicable"`
 }
@@ -382,6 +383,9 @@ func (a *App) provider(c *gin.Context) {
 	if isWS {
 		a.websocket(c, conn, grant, keyID)
 		return
+	}
+	if provider == "claude" {
+		noteClaudeClient(c.Request.UserAgent())
 	}
 
 	started := time.Now()
