@@ -340,7 +340,7 @@ func (a *App) dashboard(c *gin.Context) {
 			return
 		}
 		if len(parts) == 3 && parts[2] == "models" && m == "GET" {
-			models, err := a.providerModels(c.Request.Context(), conn.Provider, nil)
+			models, _, err := a.providerModels(c.Request.Context(), conn.Provider, nil)
 			if err != nil {
 				fail(c, 502, "Provider model catalog unavailable.")
 				return

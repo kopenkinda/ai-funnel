@@ -954,6 +954,10 @@ func TestEmbeddedService(t *testing.T) {
 		if status != 200 || !strings.Contains(string(b), "claude-") {
 			t.Fatal("new provider access not applied", status)
 		}
+		// Claude Code's gateway model discovery labels /model picker rows with display_name.
+		if !strings.Contains(string(b), `"display_name":"Claude Haiku 5.5"`) {
+			t.Fatalf("Claude models lost display names: %s", b)
+		}
 		for _, invalid := range []string{
 			`{"grants":[{"connectionId":"codex","accountIds":["account-c"],"models":null}]}`,
 			`{"grants":[{"connectionId":"codex","accountIds":null,"models":[]}]}`,
