@@ -31,11 +31,14 @@ export interface Account {
     applicable: number | null;
     checkedAt?: string;
     error?: string;
+    ineligible?: string;
     items?: {
       id: string;
       status: string;
       expires_at?: string;
       resets_left?: number;
+      kind?: "session" | "weekly" | "fable" | "full";
+      usable_now?: boolean;
       attempt?: { at: string; result: string; error?: string };
     }[];
   };

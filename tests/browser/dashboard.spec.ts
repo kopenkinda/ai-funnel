@@ -803,7 +803,7 @@ test("account rows keep plans inline and only show exceptional statuses", async 
     status,
     quotas: quota,
   });
-  const credit = (id: string, hours?: number) => ({
+  const credit = (id: string, hours?: number, kind?: string) => ({
     id,
     status: "available",
     expires_at:
@@ -811,12 +811,21 @@ test("account rows keep plans inline and only show exceptional statuses", async 
         ? undefined
         : new Date(Date.now() + hours * 3600000).toISOString(),
     resets_left: 1,
+    kind,
+    usable_now: kind ? true : undefined,
   });
   const codexCredits = {
     available: 2,
     items: [credit("later", 48), credit("next", 1.5), credit("expired", -1)],
   };
-  const claudeCredits = { available: 1, items: [credit("grant")] };
+  const claudeCredits = {
+    available: 3,
+    items: [
+      credit("fable-later", 2800, "fable"),
+      credit("weekly", undefined, "weekly"),
+      credit("fable-next", 2000, "fable"),
+    ],
+  };
   const resetRequests: { creditId: string; requestId: string }[] = [];
   const connections = [
     {
@@ -876,15 +885,11 @@ test("account rows keep plans inline and only show exceptional statuses", async 
   await page.route("**/api/accounts/*/reset", (route) => {
     const body = route.request().postDataJSON();
     resetRequests.push(body);
-    if (body.creditId === "next") {
-      codexCredits.items = codexCredits.items.filter(
-        (credit) => credit.id !== "next",
-      );
-      codexCredits.available--;
-    } else {
-      claudeCredits.items = [];
-      claudeCredits.available = 0;
-    }
+    const credits = body.creditId === "next" ? codexCredits : claudeCredits;
+    credits.items = credits.items.filter(
+      (credit) => credit.id !== body.creditId,
+    );
+    credits.available--;
     return route.fulfill({ json: { result: "reset" } });
   });
   await page.goto("/usage");
@@ -967,11 +972,17 @@ test("account rows keep plans inline and only show exceptional statuses", async 
     .getByRole("cell")
     .last();
   await expect(claudeReset).toContainText("No expiry");
+  await expect(claudeReset).toContainText("2 left · Expires in 83d");
   await claudeReset
-    .getByRole("button", { name: "Use reset", exact: true })
+    .getByRole("button", { name: "Use Fable reset", exact: true })
     .click();
-  await expect(claudeReset.getByRole("button")).toHaveCount(0);
-  expect(resetRequests[1].creditId).toBe("grant");
+  await expect(claudeReset).toContainText("Expires in 116d");
+  expect(resetRequests[1].creditId).toBe("fable-next");
+  await claudeReset
+    .getByRole("button", { name: "Use weekly reset", exact: true })
+    .click();
+  await expect(claudeReset.getByRole("button")).toHaveText(["Use Fable reset"]);
+  expect(resetRequests[2].creditId).toBe("weekly");
   const signedOut = claude
     .getByRole("row")
     .filter({ hasText: "signedout@example.com" });

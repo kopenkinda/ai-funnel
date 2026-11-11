@@ -228,6 +228,14 @@ function QuotaRow({ quota, name }: { quota: Quota; name: string }) {
   );
 }
 
+// Claude banks several kinds of reset. Each clears something different.
+export const resetKinds = {
+  session: "5-hour reset",
+  weekly: "weekly reset",
+  fable: "Fable reset",
+  full: "full reset",
+};
+
 function AccountReset({
   account,
   connection,
@@ -237,10 +245,13 @@ function AccountReset({
   connection: PublicConnection;
   onReset: (account: Account, creditId: string) => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string>();
   const hourCycle = useHourCycle();
-  const credit = account.resetCredits?.items
-    ?.filter(
+  // Only Claude credits carry a kind, and only those can be unusable for now.
+  const usable = (credit: { kind?: string; usable_now?: boolean }) =>
+    !credit.kind || credit.usable_now === true;
+  const credits = (account.resetCredits?.items ?? [])
+    .filter(
       (credit) =>
         credit.status === "available" &&
         (credit.resets_left ?? 1) > 0 &&
@@ -248,46 +259,68 @@ function AccountReset({
     )
     .sort(
       (a, b) =>
+        Number(usable(b)) - Number(usable(a)) ||
         (a.expires_at ? Date.parse(a.expires_at) : Infinity) -
-        (b.expires_at ? Date.parse(b.expires_at) : Infinity),
-    )[0];
-  if (!credit) return null;
+          (b.expires_at ? Date.parse(b.expires_at) : Infinity),
+    );
+  // One button per kind, which uses that kind's soonest-expiring credit.
+  const kinds = [...new Set(credits.map((credit) => credit.kind))];
   return (
-    <div className="flex flex-col items-end gap-1">
-      <Button
-        variant="outline"
-        size="xs"
-        disabled={busy || !connection.enabled || account.status === "paused"}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            await onReset(account, credit.id);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {busy ? (
-          <Spinner data-icon="inline-start" />
-        ) : (
-          <Icon icon={Refresh01Icon} data-icon="inline-start" />
-        )}
-        Use reset
-      </Button>
-      <span
-        className="text-xs text-muted-foreground"
-        title={
-          credit.expires_at
-            ? new Date(credit.expires_at).toLocaleString(undefined, {
-                hourCycle,
-              })
-            : undefined
-        }
-      >
-        {credit.expires_at
-          ? timeUntil(credit.expires_at).replace(/^Resets/, "Expires")
-          : "No expiry"}
-      </span>
+    <div className="flex flex-col items-end gap-2">
+      {kinds.map((kind) => {
+        const group = credits.filter((credit) => credit.kind === kind);
+        const credit = group[0];
+        const left = group.reduce((sum, c) => sum + (c.resets_left ?? 1), 0);
+        return (
+          <div key={kind ?? ""} className="flex flex-col items-end gap-1">
+            <Button
+              variant="outline"
+              size="xs"
+              title={
+                usable(credit)
+                  ? undefined
+                  : "The provider can't use this reset right now."
+              }
+              disabled={
+                busy !== undefined ||
+                !usable(credit) ||
+                !connection.enabled ||
+                account.status === "paused"
+              }
+              onClick={async () => {
+                setBusy(credit.id);
+                try {
+                  await onReset(account, credit.id);
+                } finally {
+                  setBusy(undefined);
+                }
+              }}
+            >
+              {busy === credit.id ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Icon icon={Refresh01Icon} data-icon="inline-start" />
+              )}
+              Use {kind ? resetKinds[kind] : "reset"}
+            </Button>
+            <span
+              className="text-xs text-muted-foreground"
+              title={
+                credit.expires_at
+                  ? new Date(credit.expires_at).toLocaleString(undefined, {
+                      hourCycle,
+                    })
+                  : undefined
+              }
+            >
+              {kind && left > 1 && `${left} left · `}
+              {credit.expires_at
+                ? timeUntil(credit.expires_at).replace(/^Resets/, "Expires")
+                : "No expiry"}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

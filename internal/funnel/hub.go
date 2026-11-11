@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +23,6 @@ const (
 	resetCreditURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 	codexUsageURL  = "https://chatgpt.com/backend-api/wham/usage"
 	hubClaudeURL   = "https://api.anthropic.com/api/oauth/usage"
-	// The OAuth usage endpoint can answer 429 without a Claude Code user agent.
-	claudeUserAgent = "claude-code/2.1.273"
 	// Snapshots refresh every two minutes; anything much older means refresh stalled.
 	hubMaxAge = 10 * time.Minute
 	hubBudget = 13 * time.Second
@@ -76,7 +78,7 @@ func (h hubAccess) visible(auth *core.Auth) bool {
 // redeem matches dashboard redemption: the connection must be running, and a
 // per-key hub additionally needs an active key with reset redemption allowed.
 func (h hubAccess) redeem(auth *core.Auth) bool {
-	if auth.Provider != "codex" || auth.Disabled || !h.visible(auth) || !h.d.Connections[auth.Provider].Enabled {
+	if auth.Disabled || !h.visible(auth) || !h.d.Connections[auth.Provider].Enabled {
 		return false
 	}
 	return h.key == nil || (h.key.Enabled && h.key.HubResets)
@@ -164,8 +166,19 @@ func (a *App) hub(c *gin.Context) {
 	}
 	switch {
 	case b.Method == "GET" && auth.Provider == "codex" && b.URL == codexUsageURL,
-		b.Method == "GET" && auth.Provider == "claude" && b.URL == hubClaudeURL:
+		b.Method == "GET" && auth.Provider == "claude" && (b.URL == hubClaudeURL || b.URL == claudeResetUsageURL):
 		a.hubUsage(c, h, auth, b.URL)
+	case b.Method == "POST" && auth.Provider == "claude" && claudeResetURL.MatchString(b.URL):
+		var payload struct {
+			Program   string `json:"program"`
+			GrantID   string `json:"grant_id"`
+			RequestID string `json:"request_id"`
+		}
+		if json.Unmarshal([]byte(b.Data), &payload) != nil || payload.Program != "cedar_ember" || !claudeGrantID.MatchString(payload.GrantID) || !claudeRequestID.MatchString(payload.RequestID) {
+			fail(c, 400, "Supply a banked reset and request ID.")
+			return
+		}
+		a.hubConsume(c, auth.ID, payload.GrantID, payload.RequestID)
 	case b.Method == "GET" && auth.Provider == "codex" && b.URL == resetCreditURL:
 		a.hubCredits(c, h, auth)
 	case b.Method == "POST" && auth.Provider == "codex" && b.URL == resetCreditURL+"/consume":
@@ -176,9 +189,9 @@ func (a *App) hub(c *gin.Context) {
 			fail(c, 400, "Supply a banked reset.")
 			return
 		}
-		a.hubConsume(c, auth.ID, payload.CreditID)
+		a.hubConsume(c, auth.ID, payload.CreditID, "")
 	default:
-		fail(c, 403, "Only provider usage and reset-credit operations are allowed.")
+		fail(c, 403, "Only provider usage and reset operations are allowed.")
 	}
 }
 
@@ -199,6 +212,11 @@ func hubResult(c *gin.Context, status int, body []byte) {
 }
 
 func (a *App) hubUsage(c *gin.Context, h hubAccess, auth *core.Auth, target string) {
+	// Claude lists banked resets inside usage. As with Codex credits, only
+	// bearers that may redeem them get the listing.
+	if target == claudeResetUsageURL && !h.redeem(auth) {
+		target = hubClaudeURL
+	}
 	if h.key != nil {
 		// A failed or stalled refresh must read as unavailable, not as frozen quota.
 		snap := h.d.Snapshots[auth.ID]
@@ -206,7 +224,15 @@ func (a *App) hubUsage(c *gin.Context, h hubAccess, auth *core.Auth, target stri
 			hubResult(c, 503, nil)
 			return
 		}
-		hubResult(c, 200, snap.Hub)
+		body := snap.Hub
+		if credits := snap.ResetCredits; target == claudeResetUsageURL && credits != nil && credits.CheckedAt != nil && credits.Error == "" {
+			var usage map[string]any
+			if json.Unmarshal(body, &usage) == nil {
+				usage["cedar_ember"] = claudeHubGrants(credits, h.d.ResetAttempts, auth.ID)
+				body, _ = json.Marshal(usage)
+			}
+		}
+		hubResult(c, 200, body)
 		return
 	}
 	status, body, err := a.accountRequest(c.Request.Context(), auth, "GET", target, nil)
@@ -255,7 +281,7 @@ func (a *App) hubCredits(c *gin.Context, h hubAccess, auth *core.Auth) {
 	hubResult(c, 200, body)
 }
 
-func (a *App) hubConsume(c *gin.Context, id, creditID string) {
+func (a *App) hubConsume(c *gin.Context, id, creditID, requestID string) {
 	// T3 Code gives up after 15 seconds. Waiting, redeeming and refreshing all
 	// share one budget so the verdict gets back in time.
 	deadline := time.Now().Add(hubBudget)
@@ -272,18 +298,14 @@ func (a *App) hubConsume(c *gin.Context, id, creditID string) {
 		fail(c, 403, "This hub key can't redeem resets.")
 		return
 	}
-	replay := terminalReset(h.d.ResetAttempts[auth.ID+"|"+creditID].Result)
+	previous := h.d.ResetAttempts[auth.ID+"|"+creditID]
+	replay := terminalReset(previous.Result)
 	ctx, cancel := context.WithDeadline(c.Request.Context(), deadline)
 	defer cancel()
-	status, body, err := a.consumeResetLocked(ctx, auth, creditID)
-	var response struct {
-		Code string `json:"code"`
-	}
-	answered := status == 200 && json.Unmarshal(body, &response) == nil && (response.Code == "nothing_to_reset" || terminalReset(response.Code))
-	if answered && response.Code == "reset" && !replay {
-		// T3 Code rereads usage right after redeeming, so wait for this account's
-		// refresh while the budget lasts. It runs on its own context, so a late
-		// finish still lands instead of being cut short.
+	// T3 Code rereads usage right after redeeming, so wait for this account's
+	// refresh while the budget lasts. It runs on its own context, so a late
+	// finish still lands instead of being cut short.
+	refresh := func() {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -295,6 +317,29 @@ func (a *App) hubConsume(c *gin.Context, id, creditID string) {
 		case <-done:
 		case <-time.After(time.Until(deadline)):
 		}
+	}
+	if auth.Provider == "claude" {
+		// Answer in Claude's own words, since the hub mirrors its endpoint.
+		result, status, _ := a.redeemLocked(ctx, auth, creditID, requestID)
+		if status != 200 {
+			hubResult(c, status, nil)
+			return
+		}
+		// A grant can hold several resets, so only a repeated request is a replay.
+		if result == "reset" && previous.RequestID != requestID {
+			refresh()
+		}
+		out, _ := json.Marshal(gin.H{"result": map[string]string{"reset": "reset", "already_redeemed": "already_used", "nothing_to_reset": "not_limited", "no_credit": "ineligible"}[result]})
+		hubResult(c, 200, out)
+		return
+	}
+	status, body, err := a.consumeResetLocked(ctx, auth, creditID)
+	var response struct {
+		Code string `json:"code"`
+	}
+	answered := status == 200 && json.Unmarshal(body, &response) == nil && (response.Code == "nothing_to_reset" || terminalReset(response.Code))
+	if answered && response.Code == "reset" && !replay {
+		refresh()
 	}
 	// A provider verdict is final even if local bookkeeping failed afterwards.
 	if answered {
@@ -334,6 +379,40 @@ func (a *App) hubResetQuota(c *gin.Context, id string) {
 	c.JSON(200, gin.H{"ok": true})
 }
 
+// The OAuth usage endpoint can answer 429 without a Claude Code user agent and
+// withholds banked resets from versions it considers old. Account requests
+// therefore present the newest version a connected client has used, starting
+// from the release this was last checked against.
+var claudeClient = struct {
+	sync.Mutex
+	version [3]int
+}{version: [3]int{2, 1, 322}}
+
+var claudeClientAgent = regexp.MustCompile(`^claude-(?:cli|code)/(\d{1,4})\.(\d{1,4})\.(\d{1,6})(?:\s|$)`)
+
+func noteClaudeClient(userAgent string) {
+	m := claudeClientAgent.FindStringSubmatch(userAgent)
+	if m == nil {
+		return
+	}
+	var v [3]int
+	for i := range v {
+		v[i], _ = strconv.Atoi(m[i+1])
+	}
+	claudeClient.Lock()
+	defer claudeClient.Unlock()
+	if slices.Compare(v[:], claudeClient.version[:]) > 0 {
+		claudeClient.version = v
+	}
+}
+
+func claudeUserAgent() string {
+	claudeClient.Lock()
+	defer claudeClient.Unlock()
+	v := claudeClient.version
+	return fmt.Sprintf("claude-code/%d.%d.%d", v[0], v[1], v[2])
+}
+
 // providerHeaders adds what the providers expect from their own clients: the
 // ChatGPT workspace for multi-workspace logins, and Claude Code's user agent.
 func providerHeaders(r *http.Request, auth *core.Auth) {
@@ -345,7 +424,7 @@ func providerHeaders(r *http.Request, auth *core.Auth) {
 	}
 	if auth.Provider == "claude" {
 		r.Header.Set("anthropic-beta", "oauth-2025-04-20")
-		r.Header.Set("User-Agent", claudeUserAgent)
+		r.Header.Set("User-Agent", claudeUserAgent())
 	}
 }
 

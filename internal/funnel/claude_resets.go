@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
@@ -14,7 +16,61 @@ import (
 const claudeUsageURL = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1"
 const claudeResetUsageURL = claudeUsageURL + "&skip_spend=1"
 
-var claudeGrantID = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
+var (
+	claudeGrantID   = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
+	claudeRequestID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	// A hub client need not know the organization. The account's own is used.
+	claudeResetURL = regexp.MustCompile(`^https://api\.anthropic\.com/api/organizations/[A-Za-z0-9_-]{1,64}/reset_rate_limits$`)
+)
+
+// claudeResetKind names what a grant resets, the way Claude Code does: a Fable
+// reset refills the Fable allowance and returns its share of the weekly limit.
+func claudeResetKind(raw json.RawMessage) string {
+	var grant struct {
+		Type      string   `json:"type"`
+		Clears    []string `json:"clears"`
+		GivesBack bool     `json:"gives_back_weekly"`
+	}
+	_ = json.Unmarshal(raw, &grant)
+	if grant.GivesBack {
+		return "fable"
+	}
+	if grant.Type == "session" || grant.Type == "weekly" || grant.Type == "full" {
+		return grant.Type
+	}
+	session := slices.Contains(grant.Clears, "five_hour")
+	other := slices.ContainsFunc(grant.Clears, func(limit string) bool { return limit != "five_hour" })
+	if session != other {
+		if session {
+			return "session"
+		}
+		return "weekly"
+	}
+	return "full"
+}
+
+// claudeHubGrants rebuilds Claude's reset listing from a cached snapshot for
+// per-key hubs, which never call the provider for reads.
+func claudeHubGrants(credits *ResetCredits, attempts map[string]ResetAttempt, accountID string) gin.H {
+	grants, next := []gin.H{}, any(nil)
+	for _, credit := range activeCredits(credits.Items, now()) {
+		if resetAttemptBlocks(credit, attempts[accountID+"|"+credit.ID]) {
+			continue
+		}
+		grant := gin.H{"id": credit.ID, "resets_left": credit.count(), "usable_now": credit.UsableNow, "paused": false, "type": credit.Kind, "gives_back_weekly": credit.Kind == "fable", "ends_at": nil}
+		if credit.Kind == "fable" {
+			grant["type"] = "full"
+		}
+		if credit.ExpiresAt != nil {
+			grant["ends_at"] = credit.ExpiresAt.Format(time.RFC3339)
+		}
+		if next == nil && credit.UsableNow {
+			next = credit.ID
+		}
+		grants = append(grants, grant)
+	}
+	return gin.H{"eligible": credits.Ineligible == "", "grants": grants, "next_grant_id": next}
+}
 
 func parseClaudeCredits(data map[string]any, at time.Time) (*ResetCredits, error) {
 	credits := &ResetCredits{CheckedAt: &at}
@@ -24,6 +80,7 @@ func parseClaudeCredits(data map[string]any, at time.Time) (*ResetCredits, error
 	body, _ := json.Marshal(data["cedar_ember"])
 	var status struct {
 		Eligible      *bool             `json:"eligible"`
+		Reason        string            `json:"ineligible_reason"`
 		Grants        []json.RawMessage `json:"grants"`
 		CooldownUntil *time.Time        `json:"cooldown_until"`
 	}
@@ -31,6 +88,10 @@ func parseClaudeCredits(data map[string]any, at time.Time) (*ResetCredits, error
 		return nil, fmt.Errorf("invalid Claude reset status")
 	}
 	if !*status.Eligible {
+		// Without the reason, resets withheld from this client read as none banked.
+		if claudeGrantID.MatchString(status.Reason) {
+			credits.Ineligible = status.Reason
+		}
 		return credits, nil
 	}
 	applicable := 0
@@ -48,7 +109,7 @@ func parseClaudeCredits(data map[string]any, at time.Time) (*ResetCredits, error
 			continue
 		}
 		usable := grant.UsableNow && (status.CooldownUntil == nil || !status.CooldownUntil.After(at))
-		credits.Items = append(credits.Items, ResetCredit{ID: grant.ID, Status: "available", ResetType: "claude_rate_limits", ExpiresAt: grant.EndsAt, Remaining: grant.Remaining, UsableNow: usable})
+		credits.Items = append(credits.Items, ResetCredit{ID: grant.ID, Status: "available", ResetType: "claude_rate_limits", Kind: claudeResetKind(raw), ExpiresAt: grant.EndsAt, Remaining: grant.Remaining, UsableNow: usable})
 		credits.Available += *grant.Remaining
 		if usable {
 			applicable += *grant.Remaining

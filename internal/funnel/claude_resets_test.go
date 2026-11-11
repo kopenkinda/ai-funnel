@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	core "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -191,6 +194,129 @@ func TestClaudeResetRetryRestartAndMultipleUses(t *testing.T) {
 	a.CheckExpiringResets(ctx)
 	if len(x.requests) != 4 {
 		t.Fatal("a stale grant count caused a duplicate reset")
+	}
+}
+
+// Grants as claude.ai returned them live on 2026-11-11, plus the ineligible
+// answer that used to read as an account with nothing banked.
+func TestClaudeLiveGrantsAndIneligibleReason(t *testing.T) {
+	parse := func(body string) *ResetCredits {
+		var data map[string]any
+		if err := json.Unmarshal([]byte(body), &data); err != nil {
+			t.Fatal(err)
+		}
+		credits, err := parseClaudeCredits(data, time.Date(2026, 11, 11, 2, 30, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return credits
+	}
+	credits := parse(`{"cedar_ember":{"eligible":true,"ineligible_reason":null,"at_limit":false,"grants":[
+		{"id":"full-reset-2611","label":"One full limit reset (November 2026)","resets_total":1,"resets_left":1,"starts_at":"2026-11-10T21:30:00+00:00","ends_at":"2026-12-10T22:00:00+00:00","clears":["seven_day","seven_day_overage_included"],"paused":false,"usable_now":true,"use_requires_limit":false,"percent_used":{"seven_day":34},"blocking":[],"arm":null,"type":"weekly","unavailable_reason":null,"gives_back_weekly":false},
+		{"id":"launch-2610-fable","label":"New model launch","resets_total":1,"resets_left":1,"starts_at":"2026-11-09T18:00:00+00:00","ends_at":"2027-03-09T07:59:00+00:00","clears":["seven_day_overage_included"],"paused":false,"usable_now":true,"use_requires_limit":false,"percent_used":{"seven_day":34},"blocking":[],"arm":null,"type":"full","unavailable_reason":null,"gives_back_weekly":true},
+		{"id":"launch-2610-fable-12mo","resets_total":1,"resets_left":1,"starts_at":"2026-11-09T18:00:00+00:00","ends_at":"2027-03-09T07:59:00+00:00","paused":false,"usable_now":true,"type":"full","gives_back_weekly":true},
+		{"id":"launch-2610-fable-6mo","resets_total":1,"resets_left":1,"starts_at":"2026-11-09T18:00:00+00:00","ends_at":"2027-03-09T07:59:00+00:00","paused":false,"usable_now":true,"type":"full","gives_back_weekly":true}
+	],"next_grant_id":"full-reset-2611","weekly_resets_at":"2026-11-11T21:00:00+00:00","cooldown_until":null,"paused_held":false}}`)
+	if credits.Available != 4 || credits.Applicable == nil || *credits.Applicable != 4 || len(credits.Items) != 4 || credits.Items[0].ID != "full-reset-2611" || credits.Ineligible != "" {
+		t.Fatalf("live grants were not all counted, soonest expiry first: %+v", credits)
+	}
+	if kinds := []string{credits.Items[0].Kind, credits.Items[1].Kind, credits.Items[2].Kind, credits.Items[3].Kind}; !slices.Equal(kinds, []string{"weekly", "fable", "fable", "fable"}) {
+		t.Fatalf("grants were not named the way Claude names them: %v", kinds)
+	}
+	credits = parse(`{"cedar_ember":{"eligible":false,"ineligible_reason":"cli_version","grants":[]}}`)
+	if credits.Available != 0 || credits.Applicable != nil || credits.Ineligible != "cli_version" {
+		t.Fatalf("ineligible reason was not kept: %+v", credits)
+	}
+}
+
+// The hub mirrors Claude's own endpoints, so a client can list the banked
+// resets, choose one and redeem it, for the global key and for per-key hubs.
+func TestClaudeResetsThroughUsageHub(t *testing.T) {
+	a, x := claudeResetApp(t)
+	x.grant["type"] = "weekly"
+	a.refresh(context.Background(), a.store.read().Connections["claude"])
+	key := Key{ID: "key", Enabled: true, HubHash: digest("sk-hub-scoped"), Grants: []Grant{{ConnectionID: "claude"}}}
+	_ = a.store.change(func(d *diskState) error {
+		d.Settings.HubTokenHash = digest("sk-hub-global")
+		d.Keys[key.ID] = key
+		return nil
+	})
+	router := gin.New()
+	router.Any("/v0/management/*path", a.hub)
+	call := func(token, index, method, url string, data any) (int, int, string) {
+		t.Helper()
+		encoded, _ := json.Marshal(data)
+		payload, _ := json.Marshal(map[string]string{"auth_index": index, "method": method, "url": url, "data": string(encoded)})
+		r := httptest.NewRequest("POST", "/v0/management/api-call", strings.NewReader(string(payload)))
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		var out struct {
+			StatusCode int    `json:"status_code"`
+			Body       string `json:"body"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out.StatusCode, out.Body
+	}
+	const redeemURL = "https://api.anthropic.com/api/organizations/any/reset_rate_limits"
+	scoped := "acct-" + digest("key|claude-account")[:16]
+	claim := func(requestID string) map[string]string {
+		return map[string]string{"program": "cedar_ember", "grant_id": "grant", "request_id": requestID}
+	}
+	if _, upstream, body := call("sk-hub-scoped", scoped, "GET", claudeResetUsageURL, nil); upstream != 200 || !strings.Contains(body, "seven_day") || strings.Contains(body, "cedar_ember") {
+		t.Fatalf("resets listed without redeem permission: %d %s", upstream, body)
+	}
+	if status, _, _ := call("sk-hub-scoped", scoped, "POST", redeemURL, claim("first")); status != 403 || len(x.requests) != 0 {
+		t.Fatal("hub redeemed without permission", status)
+	}
+	key.HubResets = true
+	_ = a.store.change(func(d *diskState) error { d.Keys[key.ID] = key; return nil })
+	for token, index := range map[string]string{"sk-hub-scoped": scoped, "sk-hub-global": "claude-account"} {
+		_, upstream, body := call(token, index, "GET", claudeResetUsageURL, nil)
+		var usage struct {
+			Resets struct {
+				Eligible bool   `json:"eligible"`
+				Next     string `json:"next_grant_id"`
+				Grants   []struct {
+					ID     string `json:"id"`
+					Left   int    `json:"resets_left"`
+					Type   string `json:"type"`
+					Usable bool   `json:"usable_now"`
+				} `json:"grants"`
+			} `json:"cedar_ember"`
+		}
+		_ = json.Unmarshal([]byte(body), &usage)
+		if upstream != 200 || !usage.Resets.Eligible || usage.Resets.Next != "grant" || len(usage.Resets.Grants) != 1 || usage.Resets.Grants[0].Left != 2 || usage.Resets.Grants[0].Type != "weekly" || !usage.Resets.Grants[0].Usable {
+			t.Fatalf("%s did not list the banked reset: %d %s", token, upstream, body)
+		}
+	}
+	for range 2 {
+		if status, upstream, body := call("sk-hub-scoped", scoped, "POST", redeemURL, claim("first")); status != 200 || upstream != 200 || body != `{"result":"reset"}` {
+			t.Fatalf("hub redeem %d/%d %s", status, upstream, body)
+		}
+	}
+	if len(x.requests) != 1 || x.requests[0] != "first" {
+		t.Fatalf("a repeated hub request redeemed again: %v", x.requests)
+	}
+	if status, _, _ := call("sk-hub-global", "claude-account", "POST", redeemURL, map[string]string{"program": "cedar_ember", "grant_id": "other", "request_id": "second"}); status != 200 || len(x.requests) != 1 {
+		t.Fatal("hub redeemed a reset the provider does not list", status)
+	}
+	if auth, _ := a.core.GetByID("claude-account"); auth.Unavailable {
+		t.Fatal("hub redemption left the account in cooldown")
+	}
+}
+
+func TestAccountRequestsFollowNewestClaudeClient(t *testing.T) {
+	built := claudeClient.version
+	t.Cleanup(func() { claudeClient.version = built })
+	claudeClient.version = [3]int{2, 1, 322}
+	for _, agent := range []string{"claude-cli/2.1.90 (external, cli)", "curl/8.7.1", "claude-cli/9.9.9-evil\r\nX: y", "claude-cli/2.2.4 (external, sdk-ts)", "claude-cli/2.1.400 (external, cli)"} {
+		noteClaudeClient(agent)
+	}
+	r, _ := http.NewRequest("GET", claudeResetUsageURL, nil)
+	providerHeaders(r, &core.Auth{Provider: "claude"})
+	if got := r.Header.Get("User-Agent"); got != "claude-code/2.2.4" {
+		t.Fatalf("account requests present %q, want the newest connected client", got)
 	}
 }
 

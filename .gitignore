@@ -14,3 +14,4 @@ docs/live-codex.md
 .DS_Store
 
 bin/
+.scratch/
