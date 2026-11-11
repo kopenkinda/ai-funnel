@@ -1494,3 +1494,66 @@ test("long filter menus scroll their list, not the blurred popup", async ({
       .evaluate((el) => el.scrollTop),
   ).toBe(0);
 });
+
+test("quota pool leaves out accounts that take no requests", async ({
+  page,
+}) => {
+  const now = Date.now();
+  const ids = { a: "active", b: "active", c: "paused", d: "signed_out" };
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/api/state", (route) =>
+    route.fulfill({
+      json: {
+        keys: [],
+        requests: [],
+        publicUrl: "",
+        connections: [
+          {
+            id: "codex",
+            provider: "codex",
+            name: "Codex",
+            enabled: true,
+            models: [],
+            archivedAccounts: [],
+            accounts: Object.entries(ids).map(([id, status]) => ({
+              id,
+              name: `${id}@example.com`,
+              email: `${id}@example.com`,
+              plan: "Plus",
+              status,
+              quotas: [
+                {
+                  label: "7d",
+                  remaining: 50,
+                  resetsAt: new Date(now + 48 * 3600000).toISOString(),
+                },
+              ],
+            })),
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/quota-history", (route) =>
+    route.fulfill({
+      json: Object.fromEntries(
+        Object.keys(ids).map((id) => [
+          id,
+          {
+            label: "7d",
+            points: [
+              [now / 1000 - 7200, 60],
+              [now / 1000 - 60, 50],
+            ],
+          },
+        ]),
+      ),
+    }),
+  );
+  await page.goto("/quota");
+  const pool = page.getByRole("region", { name: "Codex quota pool" });
+  await expect(pool).toContainText("2 accounts");
+  await expect(pool).toContainText("100% of 200%");
+});

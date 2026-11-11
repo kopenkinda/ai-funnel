@@ -116,6 +116,9 @@ function poolChart(
   burnHours: number,
 ) {
   const tracked = connection.accounts.flatMap((account) => {
+    // Routing skips these accounts, so their quota is not capacity.
+    if (account.status === "paused" || account.status === "signed_out")
+      return [];
     const h = history[account.id];
     if (!h?.points.length) return [];
     const reset = account.quotas.find((q) => q.label === h.label)?.resetsAt;
