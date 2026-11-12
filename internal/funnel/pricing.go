@@ -19,6 +19,7 @@ var prices = map[string]rate{
 	"gpt-6.1-terra":     {1, 5, .05, 1.25, 2.5},
 	"gpt-6-luna":        {.1, .5, .01, .125, .25},
 	"gpt-5.6-sol":       {4, 20, .4, 5, 10},
+	"codex-auto-review": {}, // Codex auto-review is not billed.
 	"claude-fable-5-2":  {8, 40, .2, 10, 16},
 	"claude-fable-5-1":  {10, 50, .25, 12.5, 20},
 	"claude-fable-5":    {10, 50, 1, 12.5, 20},
