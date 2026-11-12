@@ -8,7 +8,7 @@ The backend uses the SDK's non-overlapping token accounting. Daily totals are st
 
 ## Cost estimates
 
-Each request is priced when it completes, using the [OpenAI](https://developers.openai.com/api/docs/pricing) and [Claude](https://platform.claude.com/docs/en/about-claude/pricing) public API price tables as checked on 11 November 2026. The price version is stored with the request, and later price changes do not alter it. Long-context and supported service-tier rates apply.
+Each request is priced when it completes, using the [OpenAI](https://developers.openai.com/api/docs/pricing) and [Claude](https://platform.claude.com/docs/en/about-claude/pricing) public API price tables as checked on 11 November 2026. The price version is stored with the request, and later price changes do not alter it. Long-context and supported service-tier rates apply. Codex auto-review requests are free and count as $0.
 
 Unknown models and unclassified usage stay unpriced and are counted separately. Once a release adds a model's price, the next start prices that model's requests still in the request log and adds them to the totals. Unpriced requests already evicted from the log stay unpriced in the daily totals. The SDK usage record does not say which cache-write retention was used, so those estimates show a range between the short and long retention prices. Estimates exclude subscription fees and separate tool charges.
 
