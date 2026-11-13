@@ -40,6 +40,9 @@ func (p *websocketAccess) Authenticate(ctx context.Context, r *http.Request) (*s
 		if selected := policy.selected.Load(); selected != nil {
 			auth, exists := p.app.core.GetByID(selected.ID)
 			routing, _ := p.app.store.routingInputs(policy.connection.Provider, nil)
+			if policy.grant.Routing != nil {
+				routing = *policy.grant.Routing
+			}
 			switch {
 			case !exists || auth.Disabled || auth.Status == core.StatusDisabled:
 				status, message = 503, "The bound Codex account is unavailable. Reconnect the WebSocket."
@@ -66,7 +69,7 @@ func (a *App) websocket(c *gin.Context, conn Connection, grant Grant, keyID stri
 	principal := a.usageIdentity(keyID, conn.ID, "WS", token()[:24])
 	selected := &atomic.Pointer[core.Auth]{}
 	policy := websocketPolicy{connection: conn, grant: grant, principal: principal, selected: selected}
-	ctx := context.WithValue(c.Request.Context(), scopeKey{}, scope{provider: conn.Provider, keyID: keyID, ids: grant.AccountIDs, subscriptionOnly: grant.SubscriptionOnly, selected: selected})
+	ctx := context.WithValue(c.Request.Context(), scopeKey{}, scope{provider: conn.Provider, keyID: keyID, ids: grant.AccountIDs, subscriptionOnly: grant.SubscriptionOnly, routing: grant.Routing, selected: selected})
 	ctx = context.WithValue(ctx, websocketPolicyKey{}, policy)
 	c.Request = c.Request.WithContext(ctx)
 	c.Set("userApiKey", principal)

@@ -23,6 +23,8 @@ type Grant struct {
 	AccountIDs       []string `json:"accountIds"`
 	Models           []string `json:"models"`
 	SubscriptionOnly bool     `json:"subscriptionOnly,omitempty"`
+	// Routing overrides the provider's routing setting for this key.
+	Routing *Routing `json:"routing,omitempty"`
 }
 type Key struct {
 	ID            string     `json:"id"`

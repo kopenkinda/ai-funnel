@@ -4,6 +4,8 @@
 
 ![Settings dialog with Codex and Claude routing strategies, banked reset and usage hub options](screenshots/settings-routing.png)
 
+A key can override this per provider with **Custom routing** in its editor. The override uses the same options and replaces the Settings routing for that key only.
+
 Both providers default to **Capacity weighted** with sticky sessions on, **Prefer earlier reset** on, and the weekly window as the reset window. Relative availability uses an exponent of 2 and the top 5 accounts.
 
 ## Strategies
@@ -18,6 +20,7 @@ Both providers default to **Capacity weighted** with sticky sessions on, **Prefe
 | Sequential drain      | Smallest plan capacity first, then account ID.                                                                                |
 | Reset drain           | Nearest weekly reset by day, then most remaining 5h and weekly allowance.                                                     |
 | Single account        | Only the selected account. Requests fail if it is paused, removed, cooling down, or not assigned to the key.                  |
+| Priority order        | The first account in your order with allowance left. Accounts missing from the order come last, in ID order.                  |
 
 ## Plan capacity
 
@@ -51,6 +54,8 @@ Missing quota data counts as unused, so a failed or pending lookup never blocks 
 Sticky sessions keep a conversation on one account for cache locality. The binding uses the client's session ID, or matching conversation history when there is no ID. Bindings are isolated per API key.
 
 A binding is reused only while the account is still permitted for the key and model, enabled, not cooling down, and not exhausted while another account has allowance. Otherwise the request and its retries move to another permitted account and the session rebinds. **Subscription only** still checks each selected Codex account live and fails closed.
+
+Priority order ignores sticky sessions. A request returns to a higher account as soon as its exhausted window resets or a quota refresh shows allowance, which can cost one cache miss on the switch.
 
 ## WebSockets
 

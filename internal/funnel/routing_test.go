@@ -318,3 +318,29 @@ func TestSubscriptionOnlySpilloverAndFailClosed(t *testing.T) {
 		t.Fatal("provider scope was bypassed")
 	}
 }
+
+// A key's priority order beats the global strategy, falls to the next account
+// while a higher one is exhausted, and returns once that account has allowance,
+// even with sticky sessions on.
+func TestKeyPriorityFallsBackAndReturns(t *testing.T) {
+	auths := routingAccounts("codex", "a", "b", "c")
+	f := newRoutingFixture(routeWith("usage_weighted", func(r *Routing) { r.PreferEarlierReset = false }), map[string]Snapshot{
+		"a": usage("plus", 50, 20, time.Hour, 24*time.Hour),
+		"b": usage("plus", 100, 40, time.Hour, 24*time.Hour),
+		"c": usage("plus", 0, 0, time.Hour, 24*time.Hour),
+	})
+	priority := routeWith("priority", func(r *Routing) { r.Order = []string{"b", "a"}; r.StickySessions = true })
+	sc := scope{provider: "codex", keyID: "k", routing: &priority}
+	session := http.Header{"X-Session-Id": {"one-session"}}
+	if got, _ := f.pick(t, sc, "gpt-5.4", session, auths); got != "a" {
+		t.Fatalf("exhausted first account was not skipped: %q", got)
+	}
+	f.snaps["b"] = usage("plus", 0, 40, time.Hour, 24*time.Hour)
+	if got, _ := f.pick(t, sc, "gpt-5.4", session, auths); got != "b" {
+		t.Fatalf("did not return to the first account: %q", got)
+	}
+	f.snaps["a"], f.snaps["b"] = usage("plus", 100, 0, time.Hour, 24*time.Hour), usage("plus", 100, 0, time.Hour, 24*time.Hour)
+	if got, _ := f.pick(t, sc, "gpt-5.4", session, auths); got != "c" {
+		t.Fatalf("unlisted account was not the last backup: %q", got)
+	}
+}

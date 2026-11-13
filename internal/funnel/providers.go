@@ -396,7 +396,7 @@ func (a *App) provider(c *gin.Context) {
 	}()
 
 	// Fresh policy travels through the Gin request to the SDK selector, including retries.
-	ctx := context.WithValue(c.Request.Context(), scopeKey{}, scope{provider: provider, keyID: keyID, ids: grant.AccountIDs, subscriptionOnly: grant.SubscriptionOnly})
+	ctx := context.WithValue(c.Request.Context(), scopeKey{}, scope{provider: provider, keyID: keyID, ids: grant.AccountIDs, subscriptionOnly: grant.SubscriptionOnly, routing: grant.Routing})
 	if provider == "claude" {
 		ctx = httptransport.WithDecorator(ctx, func(next http.RoundTripper) http.RoundTripper {
 			return claudeCompressionTransport{next}

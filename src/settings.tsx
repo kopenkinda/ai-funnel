@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { HugeiconsIcon as Icon } from "@hugeicons/react";
+import { ArrowDown01Icon, ArrowUp01Icon } from "@hugeicons/core-free-icons";
 import {
   providerNames,
   providers,
@@ -14,6 +16,7 @@ import { api } from "./api";
 import { Dialog, CopyButton, ErrorMessage, ProviderIcon } from "./ui";
 import { usePreferences } from "./preferences";
 import { PrivateText } from "./privacy";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { FieldLabel, FieldDescription } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -45,19 +48,11 @@ function RoutingSettings({
   accounts: Account[];
   onSaved: () => Promise<void>;
 }) {
-  const name = providerNames[provider];
   const saved = JSON.stringify(routing);
   const [value, setValue] = useState(routing);
-  const [power, setPower] = useState(String(routing.power));
-  const [topK, setTopK] = useState(String(routing.topK));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    const next: Routing = JSON.parse(saved);
-    setValue(next);
-    setPower(String(next.power));
-    setTopK(String(next.topK));
-  }, [saved]);
+  useEffect(() => setValue(JSON.parse(saved)), [saved]);
   async function save(next: Routing) {
     setValue(next);
     setError("");
@@ -69,48 +64,17 @@ function RoutingSettings({
       await onSaved();
     } catch (e) {
       setValue(JSON.parse(saved));
-      setPower(String(routing.power));
-      setTopK(String(routing.topK));
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
-  const account = accounts.find((a) => a.id === value.accountId);
-  const number = (
-    field: "power" | "topK",
-    label: string,
-    description: string,
-    text: string,
-    setText: (text: string) => void,
-    limits: { min: string; max: string; step: string },
-  ) => (
-    <Row
-      id={`${provider}-routing-${field}`}
-      label={label}
-      description={description}
-    >
-      <Input
-        id={`${provider}-routing-${field}`}
-        type="number"
-        {...limits}
-        className="w-20 text-right tabular-nums"
-        value={text}
-        disabled={busy}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() =>
-          Number(text) !== value[field] &&
-          void save({ ...value, [field]: Number(text) })
-        }
-      />
-    </Row>
-  );
   return (
     <Section
       title={
         <>
           <ProviderIcon provider={provider} small />
-          {name} routing
+          {providerNames[provider]} routing
         </>
       }
     >
@@ -119,20 +83,105 @@ function RoutingSettings({
           <ErrorMessage>{error}</ErrorMessage>
         </div>
       )}
+      <RoutingFields
+        id={provider}
+        provider={provider}
+        value={value}
+        accounts={accounts}
+        disabled={busy}
+        saveOnBlur
+        onChange={(next) => void save(next)}
+      />
+    </Section>
+  );
+}
+
+// RoutingFields edits one routing policy. Settings saves each change, so its
+// number inputs report on blur; the key editor keeps every keystroke in its
+// draft so Enter submits the typed value.
+export function RoutingFields({
+  id,
+  provider,
+  value,
+  accounts,
+  disabled,
+  saveOnBlur = false,
+  onChange,
+}: {
+  id: string;
+  provider: Provider;
+  value: Routing;
+  accounts: Account[];
+  disabled: boolean;
+  saveOnBlur?: boolean;
+  onChange: (next: Routing) => void;
+}) {
+  const name = providerNames[provider];
+  const [power, setPower] = useState(String(value.power));
+  const [topK, setTopK] = useState(String(value.topK));
+  // Keep partial input such as "0." while it still matches the value.
+  const sync = (n: number) => (text: string) =>
+    Number(text) === n ? text : String(n);
+  useEffect(() => setPower(sync(value.power)), [value.power]);
+  useEffect(() => setTopK(sync(value.topK)), [value.topK]);
+  const account = accounts.find((a) => a.id === value.accountId);
+  // Accounts missing from the saved order follow it, matching the server.
+  const ordered = [
+    ...(value.order ?? []).flatMap((id) => accounts.filter((a) => a.id === id)),
+    ...accounts.filter((a) => !value.order?.includes(a.id)),
+  ];
+  function move(from: number, to: number) {
+    const order = ordered.map((a) => a.id);
+    order.splice(to, 0, ...order.splice(from, 1));
+    onChange({ ...value, order });
+  }
+  const number = (
+    field: "power" | "topK",
+    label: string,
+    description: string,
+    text: string,
+    setText: (text: string) => void,
+    limits: { min: string; max: string; step: string },
+  ) => (
+    <Row id={`${id}-routing-${field}`} label={label} description={description}>
+      <Input
+        id={`${id}-routing-${field}`}
+        type="number"
+        {...limits}
+        className="w-20 text-right tabular-nums"
+        value={text}
+        disabled={disabled}
+        onChange={(e) => {
+          setText(e.target.value);
+          if (!saveOnBlur)
+            onChange({ ...value, [field]: Number(e.target.value) });
+        }}
+        onBlur={() =>
+          saveOnBlur &&
+          Number(text) !== value[field] &&
+          onChange({ ...value, [field]: Number(text) })
+        }
+      />
+    </Row>
+  );
+  return (
+    <>
       <Row
         label="Strategy"
         description={`How requests choose a ${name} account.`}
       >
         <Select
           value={value.strategy}
-          disabled={busy}
+          disabled={disabled}
           onValueChange={(strategy) =>
             strategy &&
-            void save({
+            onChange({
               ...value,
               strategy,
               accountId:
                 strategy === "single_account" ? value.accountId : undefined,
+              order:
+                strategy === "priority" ? ordered.map((a) => a.id) : undefined,
             })
           }
         >
@@ -154,9 +203,9 @@ function RoutingSettings({
         <Row label="Account" description="Every request goes to this account.">
           <Select
             value={value.accountId ?? null}
-            disabled={busy}
+            disabled={disabled}
             onValueChange={(accountId) =>
-              accountId && void save({ ...value, accountId })
+              accountId && onChange({ ...value, accountId })
             }
           >
             <SelectTrigger
@@ -201,6 +250,63 @@ function RoutingSettings({
           </Select>
         </Row>
       )}
+      {value.strategy === "priority" && (
+        <div className="flex flex-col gap-3 p-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium">Account order</span>
+            <FieldDescription>
+              Requests use the first account with quota left, and move back up
+              as soon as a higher account has quota again.
+            </FieldDescription>
+          </div>
+          <ol
+            aria-label={`${name} account order`}
+            className="flex flex-col divide-y rounded-xl border"
+          >
+            {ordered.map((a, i) => (
+              <li
+                key={a.id}
+                className="flex items-center gap-2 py-1 pr-1 pl-3 text-sm"
+              >
+                <span className="w-4 text-muted-foreground tabular-nums">
+                  {i + 1}
+                </span>
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate",
+                    a.status === "paused" && "text-muted-foreground",
+                  )}
+                >
+                  <PrivateText>{a.name}</PrivateText>
+                </span>
+                {a.status === "paused" && (
+                  <span className="text-xs text-muted-foreground">Paused</span>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Move ${a.name} up`}
+                  disabled={disabled || i === 0}
+                  onClick={() => move(i, i - 1)}
+                >
+                  <Icon icon={ArrowUp01Icon} />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Move ${a.name} down`}
+                  disabled={disabled || i === ordered.length - 1}
+                  onClick={() => move(i, i + 1)}
+                >
+                  <Icon icon={ArrowDown01Icon} />
+                </Button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
       {value.strategy === "relative_availability" && (
         <>
           {number(
@@ -221,25 +327,25 @@ function RoutingSettings({
           )}
         </>
       )}
-      {value.strategy !== "single_account" && (
+      {value.strategy !== "single_account" && value.strategy !== "priority" && (
         <Row
-          id={`${provider}-sticky`}
+          id={`${id}-sticky`}
           label="Keep sessions on one account"
           description="Requests from the same session stay on the account they started on."
         >
           <Switch
-            id={`${provider}-sticky`}
+            id={`${id}-sticky`}
             checked={value.stickySessions}
-            disabled={busy}
+            disabled={disabled}
             onCheckedChange={(stickySessions) =>
-              void save({ ...value, stickySessions })
+              onChange({ ...value, stickySessions })
             }
           />
         </Row>
       )}
       {resetStrategies.includes(value.strategy) && (
         <Row
-          id={`${provider}-earlier-reset`}
+          id={`${id}-earlier-reset`}
           label="Prefer earlier reset"
           description="Uses accounts whose quota resets sooner first."
         >
@@ -251,10 +357,10 @@ function RoutingSettings({
                 size="sm"
                 spacing={0}
                 value={[value.resetWindow]}
-                disabled={busy}
+                disabled={disabled}
                 onValueChange={([resetWindow]) =>
                   resetWindow &&
-                  void save({
+                  onChange({
                     ...value,
                     resetWindow: resetWindow as Routing["resetWindow"],
                   })
@@ -265,17 +371,17 @@ function RoutingSettings({
               </ToggleGroup>
             )}
             <Switch
-              id={`${provider}-earlier-reset`}
+              id={`${id}-earlier-reset`}
               checked={value.preferEarlierReset}
-              disabled={busy}
+              disabled={disabled}
               onCheckedChange={(preferEarlierReset) =>
-                void save({ ...value, preferEarlierReset })
+                onChange({ ...value, preferEarlierReset })
               }
             />
           </div>
         </Row>
       )}
-    </Section>
+    </>
   );
 }
 

@@ -7,12 +7,15 @@ import {
 } from "@hugeicons/core-free-icons";
 import {
   providerNames,
+  routingStrategies,
   type Account,
   type Grant,
   type Provider,
   type PublicConnection,
   type PublicKey,
+  type Routing,
 } from "./types.ts";
+import { RoutingFields } from "./settings.tsx";
 import { api } from "./api.ts";
 import { CopyButton, Dialog, ErrorMessage, ProviderIcon } from "./ui.tsx";
 import { PrivateText, usePrivacy } from "./privacy.tsx";
@@ -340,12 +343,15 @@ export function ConnectionForm({
 
 export function KeyForm({
   connections,
+  routing,
   clientKey,
   inline = false,
   onClose,
   onSaved,
 }: {
   connections: PublicConnection[];
+  // Provider routing from Settings, used until a key sets its own.
+  routing?: Record<Provider, Routing>;
   clientKey?: PublicKey;
   inline?: boolean;
   onClose: () => void;
@@ -687,6 +693,57 @@ export function KeyForm({
                               ))}
                           </FieldGroup>
                         </FieldSet>
+                        {routing && (
+                          <FieldSet className="gap-3">
+                            <Field orientation="horizontal">
+                              <Checkbox
+                                id={`${formId}-routing-${c.id}`}
+                                checked={!!grant.routing}
+                                disabled={busy}
+                                onCheckedChange={(checked) =>
+                                  update(c.id, {
+                                    routing: checked
+                                      ? structuredClone(routing[c.provider])
+                                      : undefined,
+                                  })
+                                }
+                              />
+                              <FieldContent>
+                                <FieldLabel
+                                  htmlFor={`${formId}-routing-${c.id}`}
+                                >
+                                  Custom routing
+                                </FieldLabel>
+                                {!grant.routing && (
+                                  <FieldDescription>
+                                    Uses{" "}
+                                    {routingStrategies[
+                                      routing[c.provider].strategy
+                                    ].toLowerCase()}{" "}
+                                    from Settings.
+                                  </FieldDescription>
+                                )}
+                              </FieldContent>
+                            </Field>
+                            {grant.routing && (
+                              <div className="flex flex-col divide-y rounded-2xl border">
+                                <RoutingFields
+                                  id={`${formId}-${c.id}`}
+                                  provider={c.provider}
+                                  value={grant.routing}
+                                  accounts={c.accounts.filter(
+                                    (a) =>
+                                      grant.accountIds?.includes(a.id) ?? true,
+                                  )}
+                                  disabled={busy}
+                                  onChange={(next) =>
+                                    update(c.id, { routing: next })
+                                  }
+                                />
+                              </div>
+                            )}
+                          </FieldSet>
+                        )}
                         <ModelAccess
                           connection={c}
                           value={grant.models}

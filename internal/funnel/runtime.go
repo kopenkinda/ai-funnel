@@ -34,6 +34,7 @@ type scope struct {
 	keyID            string
 	ids              []string
 	subscriptionOnly bool
+	routing          *Routing
 	selected         *atomic.Pointer[core.Auth]
 }
 type selector struct {
@@ -81,6 +82,9 @@ func (s *selector) Pick(ctx context.Context, provider, model string, opts execut
 			ids[i] = a.ID
 		}
 		route, snaps = s.inputs(allowed.provider, ids)
+	}
+	if allowed.routing != nil {
+		route = *allowed.routing
 	}
 	// Single-account routing never falls back to another account.
 	if route.Strategy == "single_account" {
