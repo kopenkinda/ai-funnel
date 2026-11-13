@@ -5,7 +5,6 @@ import { Progress as ProgressPrimitive } from "@base-ui/react/progress";
 import {
   CreditCardIcon,
   MoneyNotFound04Icon,
-  MultiplicationSignIcon,
   Refresh01Icon,
 } from "@hugeicons/core-free-icons";
 import {
@@ -351,6 +350,45 @@ function AccountStatus({
   );
 }
 
+// Weekly usage relative to each provider's $20 plan (Claude Pro, ChatGPT
+// Plus), from claude.com/pricing and OpenAI's Pro tiers, November 2026.
+// Routing uses the same numbers (internal/funnel/routing.go).
+const plans: Record<Provider, Record<string, [string, number]>> = {
+  codex: {
+    plus: ["Plus", 1],
+    team: ["Business", 1],
+    business: ["Business", 1],
+    prolite: ["Pro 100", 10],
+    pro100: ["Pro 100", 10],
+    pro: ["Pro 200", 20],
+    pro200: ["Pro 200", 20],
+    promax: ["Pro 500", 50],
+    pro500: ["Pro 500", 50],
+  },
+  claude: {
+    // Pro accounts report the rate limit tier default_claude_ai.
+    ai: ["Pro", 1],
+    pro: ["Pro", 1],
+    team: ["Team", 1],
+    max5x: ["Max", 5],
+    // Max 20x was renamed Ultra: 10x Pro weekly, no 5-hour limit.
+    max20x: ["Ultra", 10],
+    ultra: ["Ultra", 10],
+  },
+};
+const baseNames: Record<Provider, string> = { codex: "Plus", claude: "Pro" };
+
+// Unknown plans count as the base plan, like routing does.
+export function planOf(provider: Provider, raw: string) {
+  const key = raw
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "")
+    .replace(/^default/, "")
+    .replace(/^claude/, "");
+  const [name, multiplier] = plans[provider][key] ?? ["", 1];
+  return { name, multiplier, free: ["free", "freeworkspace"].includes(key) };
+}
+
 export function PlanBadge({
   plan: raw,
   provider,
@@ -358,45 +396,14 @@ export function PlanBadge({
   plan: string;
   provider: Provider;
 }) {
-  const plan = raw.toLowerCase().replace(/[\s_-]+/g, "");
-  const free = [
-    "free",
-    "freeworkspace",
-    "claudefree",
-    "defaultclaudefree",
-  ].includes(plan);
-  const tiers: Record<string, [string, number]> =
-    provider === "codex"
-      ? {
-          plus: ["Plus", 1],
-          team: ["Business", 1],
-          business: ["Business", 1],
-          prolite: ["Pro 100", 10],
-          pro100: ["Pro 100", 10],
-          pro: ["Pro 200", 20],
-          pro200: ["Pro 200", 20],
-          promax: ["Pro 500", 40],
-          pro500: ["Pro 500", 40],
-        }
-      : {
-          pro: ["Pro", 1],
-          claudepro: ["Pro", 1],
-          defaultclaudepro: ["Pro", 1],
-          team: ["Team", 1],
-          claudeteam: ["Team", 1],
-          max5x: ["Max", 5],
-          claudemax5x: ["Max", 5],
-          defaultclaudemax5x: ["Max", 5],
-          max20x: ["Max", 20],
-          claudemax20x: ["Max", 20],
-          defaultclaudemax20x: ["Max", 20],
-        };
-  const tier = tiers[plan];
+  const { name, multiplier, free } = planOf(provider, raw);
   const label = free
     ? "Free"
-    : tier
-      ? `${tier[0]} · ${tier[1]}×`
-      : sentenceCase(raw || "Unknown plan");
+    : !name
+      ? sentenceCase(raw || "Unknown plan")
+      : multiplier === 1
+        ? name
+        : `${name} · ${multiplier}× ${baseNames[provider]} usage`;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -405,24 +412,48 @@ export function PlanBadge({
             role="img"
             aria-label={label}
             tabIndex={0}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-xs text-muted-foreground tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex shrink-0 items-center rounded-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         }
       >
-        {tier ? <span aria-hidden="true">{tier[1]}</span> : null}
-        <Icon
-          icon={
-            free
-              ? MoneyNotFound04Icon
-              : tier
-                ? MultiplicationSignIcon
-                : CreditCardIcon
-          }
-          size={tier ? 12 : 16}
-          aria-hidden="true"
-        />
+        {name ? (
+          <PlanMeter multiplier={multiplier} />
+        ) : (
+          <Icon
+            icon={free ? MoneyNotFound04Icon : CreditCardIcon}
+            size={16}
+            aria-hidden="true"
+          />
+        )}
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+// Five rising bars, one lit per step of 1x, 5x, 10x, 20x and 50x, so plan
+// sizes compare at a glance across providers.
+function PlanMeter({ multiplier }: { multiplier: number }) {
+  const lit = [1, 5, 10, 20, 50].filter((step) => multiplier >= step).length;
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      {[0, 1, 2, 3, 4].map((i) => (
+        <rect
+          key={i}
+          x={1 + i * 3}
+          y={12 - i * 2}
+          width="2"
+          height={3 + i * 2}
+          rx="1"
+          opacity={i < lit ? 1 : 0.25}
+        />
+      ))}
+    </svg>
   );
 }

@@ -78,7 +78,7 @@ func TestQuotaWindowsFollowModelPlanAndReset(t *testing.T) {
 		t.Fatalf("model limit did not apply: %+v", q)
 	}
 	claude := Snapshot{PlanTier: "default_claude_max_20x", Quotas: []Quota{window("5h", 90, time.Hour), window("7d", 70, 24*time.Hour), window("Opus 7d", 10, 24*time.Hour), window("Extra", 0, time.Hour)}}
-	if q := quotaFor("claude", "claude-sonnet-4-5", claude, auth, routingNow); q.secondaryUsed() != 30 || q.capacity != 20 || q.exhausted {
+	if q := quotaFor("claude", "claude-sonnet-4-5", claude, auth, routingNow); q.secondaryUsed() != 30 || q.capacity != 10 || q.exhausted {
 		t.Fatalf("Claude account-wide windows: %+v", q)
 	}
 	if q := quotaFor("claude", "claude-opus-4-5", claude, auth, routingNow); q.secondaryUsed() != 90 {

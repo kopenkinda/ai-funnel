@@ -87,12 +87,15 @@ type accountQuota struct {
 	exhausted          bool
 }
 
-// Relative capacity matches the dashboard plan badges. Unknown plans count as 1.
+// Weekly usage relative to the provider's $20 plan, matching the dashboard
+// plan badges (src/accounts.tsx). Max 20x was renamed Ultra and has 10x Pro's
+// weekly usage. Unknown plans count as 1.
 func planCapacity(provider, raw string) float64 {
 	plan := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(raw))
-	tiers := map[string]float64{"prolite": 10, "pro100": 10, "pro": 20, "pro200": 20, "promax": 40, "pro500": 40}
+	plan = strings.TrimPrefix(strings.TrimPrefix(plan, "default"), "claude")
+	tiers := map[string]float64{"prolite": 10, "pro100": 10, "pro": 20, "pro200": 20, "promax": 50, "pro500": 50}
 	if provider == "claude" {
-		tiers = map[string]float64{"max5x": 5, "claudemax5x": 5, "defaultclaudemax5x": 5, "max20x": 20, "claudemax20x": 20, "defaultclaudemax20x": 20}
+		tiers = map[string]float64{"max5x": 5, "max20x": 10, "ultra": 10}
 	}
 	if v, ok := tiers[plan]; ok {
 		return v

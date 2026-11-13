@@ -9,7 +9,7 @@ import {
 } from "./types.ts";
 import { timeUntil } from "./api.ts";
 import { ErrorMessage, ProviderIcon } from "./ui.tsx";
-import { AccountsTable, resetKinds } from "./accounts.tsx";
+import { AccountsTable, planOf, resetKinds } from "./accounts.tsx";
 import { PrivateText } from "./privacy.tsx";
 import { compareQuotaLabels } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -102,7 +102,12 @@ export function UsageOverview({
               {windows.length > 0 && (
                 <div className="grid min-w-0 gap-3 sm:grid-cols-3">
                   {windows.map((label) => (
-                    <QuotaCard key={label} label={label} accounts={accounts} />
+                    <QuotaCard
+                      key={label}
+                      label={label}
+                      accounts={accounts}
+                      provider={provider}
+                    />
                   ))}
                 </div>
               )}
@@ -184,9 +189,11 @@ function BankedResets({ accounts }: { accounts: Account[] }) {
 function QuotaCard({
   label,
   accounts,
+  provider,
 }: {
   label: string;
   accounts: Account[];
+  provider: Provider;
 }) {
   const titleId = useId();
   const rows = accounts.map((account, index) => ({
@@ -194,12 +201,15 @@ function QuotaCard({
     quota: account.quotas.find((q) => q.label === label),
     key: `account${index}`,
     color: `var(--chart-${(index % 5) + 1})`,
+    size: planOf(provider, account.planTier || account.plan).multiplier,
   }));
   const reporting = rows.filter((row) => row.quota?.remaining != null);
   if (!reporting.length) return null;
-  const remaining =
-    reporting.reduce((sum, row) => sum + row.quota!.remaining!, 0) /
-    reporting.length;
+  // Larger plans hold more of the pool, so each account counts by plan size.
+  const total = reporting.reduce((sum, row) => sum + row.size, 0);
+  const share = (row: (typeof reporting)[number]) =>
+    (row.quota!.remaining! * row.size) / total;
+  const remaining = reporting.reduce((sum, row) => sum + share(row), 0);
   const used = 100 - remaining;
   const config: ChartConfig = {
     used: { label: "Used", color: "var(--quota-used)" },
@@ -210,7 +220,7 @@ function QuotaCard({
   };
   for (const row of reporting) {
     config[row.key] = { label: row.account.name, color: row.color };
-    data[row.key] = row.quota!.remaining! / reporting.length;
+    data[row.key] = share(row);
   }
   const segments = [
     ...reporting
@@ -307,7 +317,7 @@ function QuotaCard({
             ))}
           </ul>
           <p className="border-t border-current/15 pt-2 opacity-60">
-            {`${formatPercent(used)} used · Average of ${reporting.length} reporting accounts`}
+            {`${formatPercent(used)} used · ${reporting.length} reporting accounts, weighted by plan size`}
           </p>
         </div>
       </TooltipContent>
