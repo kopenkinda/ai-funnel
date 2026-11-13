@@ -778,6 +778,50 @@ test("usage orders reported limits and persists email privacy", async ({
   await expect(email).toHaveCSS("filter", /blur\(/);
 });
 
+test("usage cards weight accounts by plan size", async ({ page }) => {
+  const account = (id: string, planTier: string, remaining: number) => ({
+    id,
+    name: `${id}@example.com`,
+    email: `${id}@example.com`,
+    plan: "claude_max",
+    planTier,
+    status: "active",
+    quotas: [{ label: "7d", remaining, resetsAt: null }],
+  });
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/api/state", (route) =>
+    route.fulfill({
+      json: {
+        connections: [
+          {
+            id: "claude",
+            provider: "claude",
+            name: "Claude",
+            enabled: true,
+            models: [],
+            createdAt: new Date().toISOString(),
+            error: null,
+            accounts: [
+              account("pro", "default_claude_ai", 0),
+              account("ultra", "default_claude_max_20x", 85),
+            ],
+          },
+        ],
+        keys: [],
+        requests: [],
+        publicUrl: "",
+      },
+    }),
+  );
+  await page.goto("/usage");
+  // Ultra holds 10x Pro's weekly usage: (0 * 1 + 85 * 10) / 11.
+  await expect(
+    page.getByRole("region", { name: "Weekly usage", exact: true }),
+  ).toContainText("77.3%");
+});
+
 test("account rows keep plans inline and only show exceptional statuses", async ({
   page,
 }) => {
@@ -857,7 +901,7 @@ test("account rows keep plans inline and only show exceptional statuses", async 
       createdAt: at,
       error: null,
       accounts: [
-        account("claudepro", "pro"),
+        account("claudepro", "claude_pro", "active", "default_claude_ai"),
         account("max5", "claude_max", "active", "default_claude_max_5x"),
         {
           ...account("max20", "claude_max", "active", "default_claude_max_20x"),
@@ -911,20 +955,25 @@ test("account rows keep plans inline and only show exceptional statuses", async 
     codex.getByRole("img", { name: "Free", exact: true }),
   ).toBeVisible();
   await expect(
-    codex.getByRole("img", { name: "Plus · 1×", exact: true }),
+    codex.getByRole("img", { name: "Plus", exact: true }),
   ).toHaveCount(2);
   await expect(
-    codex.getByRole("img", { name: "Business · 1×", exact: true }),
+    codex.getByRole("img", { name: "Business", exact: true }),
   ).toBeVisible();
   await expect(
-    codex.getByRole("img", { name: "Pro 100 · 10×", exact: true }),
+    codex.getByRole("img", { name: "Pro 100 · 10× Plus usage", exact: true }),
   ).toBeVisible();
   await expect(
-    codex.getByRole("img", { name: "Pro 200 · 20×", exact: true }),
+    codex.getByRole("img", { name: "Pro 200 · 20× Plus usage", exact: true }),
   ).toBeVisible();
-  const pro500 = codex.getByRole("img", { name: "Pro 500 · 40×", exact: true });
+  const pro500 = codex.getByRole("img", {
+    name: "Pro 500 · 50× Plus usage",
+    exact: true,
+  });
   await pro500.focus();
-  await expect(page.getByRole("tooltip")).toHaveText("Pro 500 · 40×");
+  await expect(page.getByRole("tooltip")).toHaveText(
+    "Pro 500 · 50× Plus usage",
+  );
   await pro500.press("Escape");
   for (const status of [
     "Paused",
@@ -938,13 +987,13 @@ test("account rows keep plans inline and only show exceptional statuses", async 
     await expect(text).not.toHaveAttribute("data-slot", "badge");
   }
   await expect(
-    claude.getByRole("img", { name: "Pro · 1×", exact: true }),
+    claude.getByRole("img", { name: "Pro", exact: true }),
   ).toBeVisible();
   await expect(
-    claude.getByRole("img", { name: "Max · 5×", exact: true }),
+    claude.getByRole("img", { name: "Max · 5× Pro usage", exact: true }),
   ).toBeVisible();
   await expect(
-    claude.getByRole("img", { name: "Max · 20×", exact: true }),
+    claude.getByRole("img", { name: "Ultra · 10× Pro usage", exact: true }),
   ).toBeVisible();
   await expect(
     claude.getByRole("img", { name: "Subscription", exact: true }),
