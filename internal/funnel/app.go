@@ -200,7 +200,10 @@ func (a *App) dashboard(c *gin.Context) {
 		if !decode(c, &b) {
 			return
 		}
-		b, message := a.validRouting(provider, b)
+		b, message := validRouting(provider, b, a.accountProviders())
+		if auth, ok := a.core.GetByID(b.AccountID); message == "" && b.Strategy == "single_account" && (!ok || auth.Disabled) {
+			message = "Select an active " + provider + " account."
+		}
 		if message != "" {
 			fail(c, 400, message)
 			return

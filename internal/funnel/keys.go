@@ -77,6 +77,11 @@ func validateKey(k Key, connections map[string]Connection, accounts map[string]s
 				return fmt.Errorf("Account not found in this provider.")
 			}
 		}
+		if g.Routing != nil {
+			if _, message := validRouting(conn.Provider, *g.Routing, accounts); message != "" {
+				return fmt.Errorf("%s", message)
+			}
+		}
 		for _, model := range g.Models {
 			if strings.TrimSpace(model) == "" || len(model) > 256 {
 				return fmt.Errorf("Select a valid model.")

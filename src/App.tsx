@@ -561,6 +561,7 @@ function Dashboard({ tab }: { tab: Tab }) {
               <KeyManager
                 keys={state.keys}
                 connections={connections}
+                routing={state.settings?.routing}
                 origin={origin}
                 busy={!!busy}
                 onAdd={openKey}
@@ -635,6 +636,7 @@ function Dashboard({ tab }: { tab: Tab }) {
       {modal === "key" && (
         <KeyForm
           connections={connections}
+          routing={state.settings?.routing}
           onClose={() => setModal(null)}
           onSaved={reload}
         />

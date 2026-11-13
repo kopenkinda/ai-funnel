@@ -62,6 +62,8 @@ export interface Grant {
   accountIds: string[] | null;
   models: string[] | null;
   subscriptionOnly?: boolean;
+  // Overrides the provider's routing setting for this key.
+  routing?: Routing;
 }
 export interface PublicKey {
   id: string;
@@ -144,6 +146,7 @@ export const routingStrategies = {
   sequential_drain: "Sequential drain",
   reset_drain: "Reset drain",
   single_account: "Single account",
+  priority: "Priority order",
 } as const;
 export type RoutingStrategy = keyof typeof routingStrategies;
 export interface Routing {
@@ -154,6 +157,7 @@ export interface Routing {
   power: number;
   topK: number;
   accountId?: string;
+  order?: string[];
 }
 export interface Settings {
   autoUseResets: boolean;

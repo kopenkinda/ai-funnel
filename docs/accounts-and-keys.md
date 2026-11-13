@@ -52,6 +52,8 @@ Claude lists resets only for its own CLI, and can require a recent version. Acco
 
 Selecting a key opens its editor. You can change the name, providers, accounts, models, daily request cap and expiry. The key value and usage history stay the same, and changes apply to the next request or WebSocket turn.
 
+**Custom routing** under a provider replaces the routing from **Settings** for this key, for example a priority order of a main account followed by backups. See [Routing](routing.md).
+
 Model access uses the same provider catalog as native model discovery. **All models** allows every model, including future ones. Turn it off to pick models from the searchable list.
 
 Daily caps count every authenticated provider request, including model discovery and failed attempts, and reset at midnight UTC.

@@ -8,7 +8,13 @@ import {
   ArrowRight01Icon,
   Key01Icon,
 } from "@hugeicons/core-free-icons";
-import type { PublicConnection, PublicKey, UsageTotals } from "./types";
+import type {
+  Provider,
+  PublicConnection,
+  PublicKey,
+  Routing,
+  UsageTotals,
+} from "./types";
 import { providerNames } from "./types";
 import { api, relative } from "./api";
 import { KeyForm } from "./forms";
@@ -50,6 +56,7 @@ const status = (key: PublicKey) =>
 export function KeyManager({
   keys,
   connections,
+  routing,
   origin,
   busy,
   onAdd,
@@ -60,6 +67,7 @@ export function KeyManager({
 }: {
   keys: PublicKey[];
   connections: PublicConnection[];
+  routing?: Record<Provider, Routing>;
   origin: string;
   busy: boolean;
   onAdd: () => void;
@@ -265,6 +273,7 @@ export function KeyManager({
               key={`${selected.id}:${revision}`}
               clientKey={selected}
               connections={connections}
+              routing={routing}
               inline
               onClose={() => setRevision((value) => value + 1)}
               onSaved={onSaved}

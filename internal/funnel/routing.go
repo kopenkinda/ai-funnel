@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,7 +15,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
-var routingStrategies = []string{"capacity_weighted", "relative_availability", "usage_weighted", "round_robin", "fill_first", "sequential_drain", "reset_drain", "single_account"}
+var routingStrategies = []string{"capacity_weighted", "relative_availability", "usage_weighted", "round_robin", "fill_first", "sequential_drain", "reset_drain", "single_account", "priority"}
 
 type Routing struct {
 	Strategy           string  `json:"strategy"`
@@ -24,6 +25,9 @@ type Routing struct {
 	Power              float64 `json:"power"`
 	TopK               int     `json:"topK"`
 	AccountID          string  `json:"accountId,omitempty"`
+	// Order lists priority accounts first to last. Accounts left out of it
+	// rank after the listed ones, so a newly added account is the last backup.
+	Order []string `json:"order,omitempty"`
 }
 
 func defaultRouting() Routing {
@@ -36,8 +40,9 @@ func (s Settings) routing(provider string) Routing {
 	return defaultRouting()
 }
 
-// Single-account routing names one enabled account of the same provider.
-func (a *App) validRouting(provider string, r Routing) (Routing, string) {
+// validRouting checks a routing policy against the account providers. Single
+// account and priority routing may only name accounts of the same provider.
+func validRouting(provider string, r Routing, accounts map[string]string) (Routing, string) {
 	if !contains(routingStrategies, r.Strategy) {
 		return r, "Select a routing strategy."
 	}
@@ -52,11 +57,22 @@ func (a *App) validRouting(provider string, r Routing) (Routing, string) {
 	}
 	if r.Strategy != "single_account" {
 		r.AccountID = ""
+	} else if accounts[r.AccountID] != provider {
+		return r, "Select an active " + provider + " account."
+	}
+	if r.Strategy != "priority" {
+		r.Order = nil
 		return r, ""
 	}
-	auth, ok := a.core.GetByID(r.AccountID)
-	if r.AccountID == "" || !ok || auth.Provider != provider || auth.Disabled {
-		return r, "Select an active " + provider + " account."
+	seen := map[string]bool{}
+	for _, id := range r.Order {
+		if accounts[id] != provider || seen[id] {
+			return r, "Order only " + provider + " accounts, each once."
+		}
+		seen[id] = true
+	}
+	if len(r.Order) == 0 {
+		return r, "Order at least one " + provider + " account."
 	}
 	return r, ""
 }
@@ -282,6 +298,15 @@ func (p strategy) Pick(ctx context.Context, provider, model string, opts executo
 		selected = first(func(x, y accountQuota) int {
 			return compare(float64(x.resetBucket("secondary", plan.at)), float64(y.resetBucket("secondary", plan.at)), x.primaryUsed(), y.primaryUsed(), x.secondaryUsed(), y.secondaryUsed())
 		})
+	case "priority":
+		// Unlisted accounts (index -1) rank after every listed one.
+		rank := func(a *core.Auth) uint { return uint(slices.Index(plan.route.Order, a.ID)) }
+		selected = pool[0]
+		for _, a := range pool[1:] {
+			if rank(a) < rank(selected) {
+				selected = a
+			}
+		}
 	default:
 		selected = pool[0]
 	}
@@ -402,7 +427,9 @@ func (s *selector) route(ctx context.Context, provider, model string, opts execu
 		ready = candidates
 	}
 	ctx = context.WithValue(ctx, routePlanKey{}, routePlan{route, quotas, at})
-	if !route.StickySessions || route.Strategy == "single_account" {
+	// Priority routing returns to a higher account as soon as it has allowance,
+	// so a session binding would only hold traffic on a backup.
+	if !route.StickySessions || route.Strategy == "single_account" || route.Strategy == "priority" {
 		return strategy{s}.Pick(ctx, provider, model, opts, ready)
 	}
 	key, _ := opts.Metadata[executor.CallerScopeMetadataKey].(string)
