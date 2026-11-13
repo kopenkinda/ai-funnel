@@ -1557,3 +1557,70 @@ test("quota pool leaves out accounts that take no requests", async ({
   await expect(pool).toContainText("2 accounts");
   await expect(pool).toContainText("100% of 200%");
 });
+
+test("quota pool charts a model's own limit and its drain rate", async ({
+  page,
+}) => {
+  const now = Date.now() / 1000;
+  const points = (end: number) => [
+    [now - 7200, end + 6],
+    [now - 60, end],
+  ];
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.route("**/api/state", (route) =>
+    route.fulfill({
+      json: {
+        keys: [],
+        requests: [],
+        publicUrl: "",
+        connections: [
+          {
+            id: "claude",
+            provider: "claude",
+            name: "Claude",
+            enabled: true,
+            models: [],
+            archivedAccounts: [],
+            accounts: [
+              {
+                id: "a",
+                name: "a@example.com",
+                email: "a@example.com",
+                plan: "Max",
+                status: "active",
+                quotas: [
+                  { label: "7d", remaining: 70, resetsAt: null },
+                  { label: "Fable 7d", remaining: 40, resetsAt: null },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/quota-history", (route) =>
+    route.fulfill({
+      json: {
+        a: {
+          label: "7d",
+          points: points(70),
+          scopes: [{ label: "Fable 7d", points: points(40) }],
+        },
+      },
+    }),
+  );
+  await page.goto("/quota");
+  const pool = page.getByRole("region", { name: "Claude quota pool" });
+  await expect(pool).toContainText("70% of 100%");
+  await pool.getByRole("button", { name: /Fable/ }).click();
+  await expect(pool).toContainText("40% of 100%");
+  await page.getByRole("button", { name: "Drain rate" }).click();
+  await expect(
+    pool
+      .locator(".recharts-cartesian-axis-tick-value", { hasText: "%/h" })
+      .first(),
+  ).toBeVisible();
+});

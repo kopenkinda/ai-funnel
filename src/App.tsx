@@ -170,6 +170,7 @@ function Dashboard({ tab }: { tab: Tab }) {
   }, [authenticated]);
   const connections = state.connections;
   const connected = connections.filter((c) => c.accounts.length > 0);
+  const accounts = connected.flatMap((c) => c.accounts);
   const providerEntries = providers.map((provider) => {
     const connection = connections.find((c) => c.provider === provider);
     return {
@@ -252,9 +253,21 @@ function Dashboard({ tab }: { tab: Tab }) {
       <main className="min-w-0 flex-1">
         <div className="mx-auto flex w-full max-w-[1500px] flex-1 flex-col gap-7 px-4 py-6 sm:px-7 sm:py-8 lg:px-9">
           <header className="flex flex-wrap items-center justify-between gap-4">
-            <h1 className="font-heading text-3xl font-bold tracking-tight">
-              {title}
-            </h1>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <h1 className="font-heading text-3xl font-bold tracking-tight">
+                {title}
+              </h1>
+              {tab === "quota" && (
+                <p className="text-muted-foreground tabular-nums">
+                  {accounts.length} accounts ·{" "}
+                  {
+                    accounts.filter((a) => a.quotas.length && !a.quotaError)
+                      .length
+                  }{" "}
+                  loaded
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {(tab === "pool" || tab === "quota") && (
                 <Button
