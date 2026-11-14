@@ -356,3 +356,23 @@ func TestClaudeResetEligibilityAndFailedDiscovery(t *testing.T) {
 		t.Fatal("an ineligible, expired, unverified, or disabled reset was redeemed")
 	}
 }
+
+// Claude rate limits its usage endpoint, and T3 Code hides any account whose
+// usage read fails. A failed refresh must keep serving the last reading.
+func TestUsageHubSurvivesFailedClaudeRefresh(t *testing.T) {
+	a, x := claudeResetApp(t)
+	conn := a.store.read().Connections["claude"]
+	a.refresh(context.Background(), conn)
+	x.lookupFailed = true
+	a.refresh(context.Background(), conn)
+	_ = a.store.change(func(d *diskState) error { d.Settings.HubTokenHash = digest("sk-hub-global"); return nil })
+	router := gin.New()
+	router.Any("/v0/management/*path", a.hub)
+	r := httptest.NewRequest("POST", "/v0/management/api-call", strings.NewReader(`{"auth_index":"claude-account","method":"GET","url":"`+hubClaudeURL+`"}`))
+	r.Header.Set("Authorization", "Bearer sk-hub-global")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `\"five_hour\":{\"resets_at\":null,\"utilization\":100}`) {
+		t.Fatalf("usage hidden after a failed refresh: %d %s", w.Code, w.Body)
+	}
+}

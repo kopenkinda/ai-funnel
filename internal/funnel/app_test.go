@@ -424,14 +424,14 @@ func TestEmbeddedService(t *testing.T) {
 		}
 		if err := store.change(func(d *diskState) error {
 			snap := d.Snapshots["account-a"]
-			snap.Error = "Quota lookup unavailable. Retry refresh later."
+			snap.Error, snap.At = "Quota lookup unavailable. Retry refresh later.", now().Add(-hubMaxAge-time.Minute)
 			d.Snapshots["account-a"] = snap
 			return nil
 		}); err != nil {
 			t.Fatal(err)
 		}
 		if _, upstream, _ := call(index, "GET", usage, ""); upstream != 503 {
-			t.Fatal("failed refresh served as fresh usage", upstream)
+			t.Fatal("stalled refresh served as fresh usage", upstream)
 		}
 		// A refresh that started before the stored snapshot must not replace it.
 		before := store.read().Snapshots["account-a"]
@@ -449,7 +449,7 @@ func TestEmbeddedService(t *testing.T) {
 		_ = store.change(func(d *diskState) error { d.Snapshots["account-a"] = before; return nil })
 		_ = store.change(func(d *diskState) error {
 			snap := d.Snapshots["account-a"]
-			snap.Error = ""
+			snap.Error, snap.At = "", now()
 			d.Snapshots["account-a"] = snap
 			return nil
 		})
