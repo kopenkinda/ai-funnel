@@ -76,11 +76,12 @@ To share usage for one client key only, open the key under **API keys** and choo
 
 - lists only the accounts assigned by the key's grants, under opaque IDs, and skips paused accounts;
 - labels accounts as `Codex account 1a2b3c` unless **Show account emails** is on, and never shares ChatGPT workspace IDs;
-- serves the funnel's cached usage snapshots, reduced to the quota windows T3 Code reads, so it never makes provider calls for reads;
 - lists and redeems banked Codex and Claude resets only with **Allow reset redemption** on, while the key and its connection are active;
 - keeps showing usage while the key is paused, stops working when the key expires or is archived, and is cleared on archive.
 
-The global hub key in **Settings** sees every account with live provider reads and can redeem resets on any running connection.
+The global hub key in **Settings** sees every account and can redeem resets on any running connection.
+
+Both kinds of hub key read usage from the funnel's own background refresh, reduced to the quota windows T3 Code reads, so hub reads never call the providers. Claude rate limits its usage endpoint, and T3 Code hides an account whose read fails, so a failed refresh keeps serving the last reading. Usage reads as unavailable once that reading is more than 10 minutes old or the account is signed out.
 
 The hub exposes `/v0/management/auth-files`, `/v0/management/reset-quota` and a scoped `/v0/management/api-call` for the official Codex and Claude usage endpoints and their reset operations. It does not expose raw SDK management, credentials or arbitrary outbound requests.
 

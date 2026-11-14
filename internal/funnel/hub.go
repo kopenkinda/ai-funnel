@@ -29,9 +29,8 @@ const (
 )
 
 // hubAccess is what one hub bearer may see and do. The global hub key and the
-// dashboard key have no key: they see every account with live provider reads.
-// A per-key hub sees only its key's assigned accounts, under opaque IDs, and
-// reads the cached usage snapshots instead of calling providers.
+// dashboard key have no key: they see every account. A per-key hub sees only
+// its key's assigned accounts, under opaque IDs. Both read cached usage.
 type hubAccess struct {
 	key *Key
 	d   diskState
@@ -212,35 +211,23 @@ func hubResult(c *gin.Context, status int, body []byte) {
 }
 
 func (a *App) hubUsage(c *gin.Context, h hubAccess, auth *core.Auth, target string) {
-	// Claude lists banked resets inside usage. As with Codex credits, only
-	// bearers that may redeem them get the listing.
-	if target == claudeResetUsageURL && !h.redeem(auth) {
-		target = hubClaudeURL
-	}
-	if h.key != nil {
-		// A failed or stalled refresh must read as unavailable, not as frozen quota.
-		snap := h.d.Snapshots[auth.ID]
-		if len(snap.Hub) == 0 || snap.Error != "" || now().Sub(snap.At) > hubMaxAge {
-			hubResult(c, 503, nil)
-			return
-		}
-		body := snap.Hub
-		if credits := snap.ResetCredits; target == claudeResetUsageURL && credits != nil && credits.CheckedAt != nil && credits.Error == "" {
-			var usage map[string]any
-			if json.Unmarshal(body, &usage) == nil {
-				usage["cedar_ember"] = claudeHubGrants(credits, h.d.ResetAttempts, auth.ID)
-				body, _ = json.Marshal(usage)
-			}
-		}
-		hubResult(c, 200, body)
+	// Live reads on top of the background refresh got 429s from Claude, and T3
+	// Code hides failed accounts. A failed refresh keeps the last success's At.
+	snap := h.d.Snapshots[auth.ID]
+	if len(snap.Hub) == 0 || snap.SignedOut || now().Sub(snap.At) > hubMaxAge {
+		hubResult(c, 503, nil)
 		return
 	}
-	status, body, err := a.accountRequest(c.Request.Context(), auth, "GET", target, nil)
-	if err != nil {
-		fail(c, 502, "Provider usage request failed.")
-		return
+	body := snap.Hub
+	// As with Codex credits, only bearers that may redeem get the reset listing.
+	if credits := snap.ResetCredits; target == claudeResetUsageURL && h.redeem(auth) && credits != nil && credits.CheckedAt != nil && credits.Error == "" {
+		var usage map[string]any
+		if json.Unmarshal(body, &usage) == nil {
+			usage["cedar_ember"] = claudeHubGrants(credits, h.d.ResetAttempts, auth.ID)
+			body, _ = json.Marshal(usage)
+		}
 	}
-	hubResult(c, status, body)
+	hubResult(c, 200, body)
 }
 
 // Credits are listed only to bearers that may redeem them, so T3 Code never
@@ -447,7 +434,7 @@ func (a *App) accountRequest(ctx context.Context, auth *core.Auth, method, targe
 	return response.StatusCode, data, err
 }
 
-// hubBody keeps only the usage fields T3 Code parses, so per-key hubs never see
+// hubBody keeps only the usage fields T3 Code parses, so hubs never see
 // user, workspace or balance data from the provider. Relative reset times become
 // absolute because the body is served from cache.
 func hubBody(provider string, data map[string]any, at time.Time) json.RawMessage {
