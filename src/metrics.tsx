@@ -227,10 +227,13 @@ export function UsageMetrics({
   daily,
   hourly,
   connections,
+  resets = true,
 }: {
   daily?: Record<string, DailyUsage>;
   hourly?: Record<string, DailyUsage>;
   connections: PublicConnection[];
+  // Reset times belong to accounts, so a single key's view leaves them out.
+  resets?: boolean;
 }) {
   const [period, setPeriod] = useState<Period>("7d");
   const [selected, setSelected] = useState<Provider[]>([]);
@@ -290,9 +293,11 @@ export function UsageMetrics({
       className="grid min-w-0 gap-3 sm:grid-cols-2"
     >
       <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:col-span-2">
-        <ResetTimeline
-          connections={connections.filter((c) => shown(c.provider))}
-        />
+        {resets && (
+          <ResetTimeline
+            connections={connections.filter((c) => shown(c.provider))}
+          />
+        )}
         {connected.length > 1 && (
           <ToggleGroup
             aria-label="Providers"

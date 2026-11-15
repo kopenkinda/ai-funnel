@@ -117,9 +117,11 @@ func TestUnpricedRequestsArePricedOnRestart(t *testing.T) {
 			t.Fatalf("priced request was rewritten: %+v", d.Requests[1].Cost)
 		}
 		for name, totals := range map[string]UsageTotals{
-			"daily":  d.Daily[at.Format("2006-01-02")+"|claude"].UsageTotals,
-			"hourly": d.Hourly[at.Truncate(time.Hour).Format(time.RFC3339)+"|claude"].UsageTotals,
-			"key":    d.KeyUsage["key"],
+			"daily":      d.Daily[at.Format("2006-01-02")+"|claude"].UsageTotals,
+			"hourly":     d.Hourly[at.Truncate(time.Hour).Format(time.RFC3339)+"|claude"].UsageTotals,
+			"key":        d.KeyUsage["key"],
+			"key daily":  d.KeyDaily[at.Format("2006-01-02")+"|claude|key"].UsageTotals,
+			"key hourly": d.KeyHourly[at.Truncate(time.Hour).Format(time.RFC3339)+"|claude|key"].UsageTotals,
 		} {
 			if totals.Requests != 1 || totals.Unpriced != 0 || math.Abs(totals.Cost.Min-.002) > 1e-9 {
 				t.Fatalf("%s totals after repricing: %+v", name, totals)
@@ -138,6 +140,7 @@ func TestHourlyHistoryUpgrade(t *testing.T) {
 	if err := store.change(func(d *diskState) error {
 		d.Hourly = nil // State written before hourly accounting existed.
 		d.KeyUsage = nil
+		d.KeyDaily, d.KeyHourly = nil, nil
 		d.Requests = []RequestLog{
 			{At: at, Provider: "codex", KeyID: "key", Tokens: &Tokens{Input: 100, Total: 100}, Cost: &Cost{Min: .1, Max: .1, Input: .1, Priced: true}},
 			{At: at.AddDate(0, 0, -3), Provider: "codex", KeyID: "key", Tokens: &Tokens{Total: 200}, Cost: &Cost{}},

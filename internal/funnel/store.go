@@ -103,14 +103,17 @@ type diskState struct {
 	// Kept outside SDK auth records so token refreshes and re-imports cannot drop it.
 	Billing map[string]Billing `json:"billing,omitempty"`
 	// Archived accounts are always paused and hidden from pools, routing and the hub.
-	Archived   map[string]bool        `json:"archived,omitempty"`
-	Sessions   map[string]time.Time   `json:"sessions"`
-	Usage      map[string]int         `json:"usage"`
-	Requests   []RequestLog           `json:"requests"`
-	Daily      map[string]DailyUsage  `json:"daily,omitempty"`
-	Hourly     map[string]DailyUsage  `json:"hourly"`
-	KeyUsage   map[string]UsageTotals `json:"keyUsage"`
-	TrackingAt *time.Time             `json:"trackingAt,omitempty"`
+	Archived map[string]bool        `json:"archived,omitempty"`
+	Sessions map[string]time.Time   `json:"sessions"`
+	Usage    map[string]int         `json:"usage"`
+	Requests []RequestLog           `json:"requests"`
+	Daily    map[string]DailyUsage  `json:"daily,omitempty"`
+	Hourly   map[string]DailyUsage  `json:"hourly"`
+	KeyUsage map[string]UsageTotals `json:"keyUsage"`
+	// Per-key day and hour buckets. Lifetime totals stay in KeyUsage.
+	KeyDaily   map[string]DailyUsage `json:"keyDaily"`
+	KeyHourly  map[string]DailyUsage `json:"keyHourly"`
+	TrackingAt *time.Time            `json:"trackingAt,omitempty"`
 	// Keyed by account ID; see recordQuota.
 	QuotaHistory map[string]QuotaHistory `json:"quotaHistory,omitempty"`
 }
@@ -232,15 +235,25 @@ func NewStore(dir, admin string) (*Store, error) {
 		return nil, e
 	}
 	upgraded := false
-	if s.state.Hourly == nil {
-		upgraded = true
-		s.state.Hourly = map[string]DailyUsage{}
-		// Upgrade existing metadata so Today includes already-recorded usage.
-		for _, r := range s.state.Requests {
-			if r.Tokens != nil && r.Cost != nil && !r.At.Before(now().AddDate(0, 0, -2)) {
-				s.state.addHourly(r.At, r.Provider, *r.Tokens, *r.Cost)
+	// Aggregates added by later versions start from retained request history,
+	// so a new chart includes usage recorded before the upgrade. Daily history
+	// predates the request log and is never rebuilt.
+	missing := []bool{false, s.state.Hourly == nil, s.state.KeyDaily == nil, s.state.KeyHourly == nil}
+	for _, m := range []*map[string]DailyUsage{&s.state.Daily, &s.state.Hourly, &s.state.KeyDaily, &s.state.KeyHourly} {
+		if *m == nil {
+			*m = map[string]DailyUsage{}
+		}
+	}
+	for i, series := range s.state.usageSeries() {
+		if missing[i] {
+			upgraded = true
+			for _, r := range s.state.Requests {
+				series.add(r)
 			}
 		}
+	}
+	if upgraded {
+		s.state.pruneHourly()
 	}
 	if s.state.KeyUsage == nil {
 		upgraded = true

@@ -9,6 +9,7 @@ import {
   Key01Icon,
 } from "@hugeicons/core-free-icons";
 import type {
+  DailyUsage,
   Provider,
   PublicConnection,
   PublicKey,
@@ -20,7 +21,7 @@ import { api, relative } from "./api";
 import { KeyForm } from "./forms";
 import { PrivateText } from "./privacy";
 import { CopyButton, ErrorMessage, ProviderIcon } from "./ui";
-import { compact, costLabel, money } from "./metrics";
+import { compact, costLabel, money, UsageMetrics } from "./metrics";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,13 +31,13 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const date = (value: string) =>
   new Date(value).toLocaleDateString(undefined, {
@@ -80,6 +81,7 @@ export function KeyManager({
   const [view, setView] = useState("current");
   const [selectedId, setSelectedId] = useState(keys[0]?.id);
   const [revision, setRevision] = useState(0);
+  const [pane, setPane] = useState("usage");
   const visible = keys.filter(
     (key) => !!key.archivedAt === (view === "archived"),
   );
@@ -267,26 +269,48 @@ export function KeyManager({
               </dd>
             </div>
           </dl>
-          <Separator />
-          <div className="flex flex-1 flex-col px-5 pt-6 sm:px-7">
-            <KeyForm
-              key={`${selected.id}:${revision}`}
-              clientKey={selected}
-              connections={connections}
-              routing={routing}
-              inline
-              onClose={() => setRevision((value) => value + 1)}
-              onSaved={onSaved}
-            />
-          </div>
-          {!selected.archivedAt && (
-            <KeyHubAccess
-              key={selected.id}
-              clientKey={selected}
-              origin={origin}
-              onSaved={onSaved}
-            />
-          )}
+          <Tabs
+            value={pane}
+            onValueChange={(value) => setPane(value as string)}
+            className="flex-1 gap-0"
+          >
+            <div className="border-b px-5 pb-3 sm:px-7">
+              <TabsList aria-label="Key details">
+                <TabsTrigger value="usage">Usage</TabsTrigger>
+                <TabsTrigger value="settings">Settings</TabsTrigger>
+              </TabsList>
+            </div>
+            <TabsContent value="usage" className="px-5 py-6 sm:px-7">
+              <KeyUsage
+                key={selected.id}
+                clientKey={selected}
+                connections={connections.filter((c) =>
+                  selected.grants.some((g) => g.connectionId === c.id),
+                )}
+              />
+            </TabsContent>
+            <TabsContent value="settings" className="flex flex-col">
+              <div className="flex flex-1 flex-col px-5 pt-6 sm:px-7">
+                <KeyForm
+                  key={`${selected.id}:${revision}`}
+                  clientKey={selected}
+                  connections={connections}
+                  routing={routing}
+                  inline
+                  onClose={() => setRevision((value) => value + 1)}
+                  onSaved={onSaved}
+                />
+              </div>
+              {!selected.archivedAt && (
+                <KeyHubAccess
+                  key={selected.id}
+                  clientKey={selected}
+                  origin={origin}
+                  onSaved={onSaved}
+                />
+              )}
+            </TabsContent>
+          </Tabs>
         </div>
       ) : (
         <Empty className="min-h-48">
@@ -298,6 +322,43 @@ export function KeyManager({
         </Empty>
       )}
     </section>
+  );
+}
+
+type Buckets = Record<string, DailyUsage>;
+
+function KeyUsage({
+  clientKey,
+  connections,
+}: {
+  clientKey: PublicKey;
+  connections: PublicConnection[];
+}) {
+  const [usage, setUsage] = useState<{ daily: Buckets; hourly: Buckets }>();
+  const [error, setError] = useState("");
+  // Each dashboard reload passes a new key object, so the graphs refresh with
+  // it. lastUsedAt alone moves before a streaming request's usage is recorded.
+  useEffect(() => {
+    let current = true;
+    api<{ daily: Buckets; hourly: Buckets }>(`/keys/${clientKey.id}/usage`)
+      .then((value) => {
+        if (current) setUsage(value);
+      })
+      .catch((e) => {
+        if (current) setError((e as Error).message);
+      });
+    return () => {
+      current = false;
+    };
+  }, [clientKey]);
+  if (error) return <ErrorMessage>{error}</ErrorMessage>;
+  return (
+    <UsageMetrics
+      daily={usage?.daily}
+      hourly={usage?.hourly}
+      connections={connections}
+      resets={false}
+    />
   );
 }
 

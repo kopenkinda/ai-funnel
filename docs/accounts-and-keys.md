@@ -50,7 +50,7 @@ Claude lists resets only for its own CLI, and can require a recent version. Acco
 
 **API keys → Add key** creates a shared key (`sk-af-...`) or registers an existing device key value. Select its providers, accounts and models. Nothing is inherited from another service. Key values are shown once and stored as SHA-256 hashes.
 
-Selecting a key opens its editor. You can change the name, providers, accounts, models, daily request cap and expiry. The key value and usage history stay the same, and changes apply to the next request or WebSocket turn.
+Selecting a key opens its **Usage** tab, with the same token and cost graphs as the Usage page limited to that key. Its **Settings** tab holds the editor. You can change the name, providers, accounts, models, daily request cap and expiry. The key value and usage history stay the same, and changes apply to the next request or WebSocket turn.
 
 **Custom routing** under a provider replaces the routing from **Settings** for this key, for example a priority order of a main account followed by backups. See [Routing](routing.md).
 

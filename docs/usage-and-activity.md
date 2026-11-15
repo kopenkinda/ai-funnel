@@ -16,6 +16,8 @@ Unknown models and unclassified usage stay unpriced and are counted separately. 
 
 The **API keys** page compares lifetime cost and tokens per key. These totals are stored independently of the request log and survive log eviction. Upgrading backfilled totals from the retained request history; requests evicted before that cannot be attributed to keys.
 
+Each key's **Usage** tab graphs its own daily and hourly tokens and cost, stored the same way as the Usage page's totals. History from before per-key graphs existed starts at the oldest request still in the request log, so a key's All time graph can begin later than its lifetime total.
+
 ## Activity
 
 ![Activity log listing requests with account, API key, model, tokens, speed and estimated cost](screenshots/activity.png)

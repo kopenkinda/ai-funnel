@@ -48,7 +48,60 @@ type DailyUsage struct {
 	Day      string `json:"day"`
 	Hour     string `json:"hour,omitempty"`
 	Provider string `json:"provider"`
+	KeyID    string `json:"keyId,omitempty"`
 	UsageTotals
+}
+
+// usageSeries is one day or hour aggregate, either provider-wide or per API
+// key. Per-key series feed a key's usage tab; provider-wide ones the Usage page.
+type usageSeries struct {
+	m      map[string]DailyUsage
+	hourly bool
+	perKey bool
+}
+
+func (d *diskState) usageSeries() []usageSeries {
+	return []usageSeries{{d.Daily, false, false}, {d.Hourly, true, false}, {d.KeyDaily, false, true}, {d.KeyHourly, true, true}}
+}
+
+func (s usageSeries) bucket(at time.Time, provider, keyID string) (string, DailyUsage) {
+	at = at.UTC()
+	v := DailyUsage{Day: at.Format("2006-01-02"), Provider: provider}
+	k := v.Day
+	if s.hourly {
+		v.Hour = at.Truncate(time.Hour).Format(time.RFC3339)
+		k = v.Hour
+	}
+	k += "|" + provider
+	if s.perKey {
+		v.KeyID = keyID
+		k += "|" + keyID
+	}
+	return k, v
+}
+
+func (s usageSeries) add(r RequestLog) {
+	if r.Tokens == nil || r.Cost == nil || (s.perKey && r.KeyID == "") {
+		return
+	}
+	k, v := s.bucket(r.At, r.Provider, r.KeyID)
+	if old, ok := s.m[k]; ok {
+		v = old
+	}
+	v.add(*r.Tokens, *r.Cost)
+	s.m[k] = v
+}
+
+// Hours older than two days are dropped.
+func (d *diskState) pruneHourly() {
+	cutoff := now().AddDate(0, 0, -2).Format(time.RFC3339)
+	for _, m := range []map[string]DailyUsage{d.Hourly, d.KeyHourly} {
+		for k, v := range m {
+			if v.Hour < cutoff {
+				delete(m, k)
+			}
+		}
+	}
 }
 
 type UsageTotals struct {
@@ -93,19 +146,14 @@ func (d *diskState) reprice() bool {
 		}
 		d.Requests[i].Cost = &cost
 		changed = true
-		at := r.At.UTC()
-		day := at.Format("2006-01-02") + "|" + r.Provider
-		hour := at.Truncate(time.Hour).Format(time.RFC3339) + "|" + r.Provider
-		if v, ok := d.Daily[day]; ok {
-			v.addCost(cost)
-			v.Unpriced--
-			d.Daily[day] = v
-		}
 		// Hours older than two days are already gone.
-		if v, ok := d.Hourly[hour]; ok {
-			v.addCost(cost)
-			v.Unpriced--
-			d.Hourly[hour] = v
+		for _, s := range d.usageSeries() {
+			k, _ := s.bucket(r.At, r.Provider, r.KeyID)
+			if v, ok := s.m[k]; ok {
+				v.addCost(cost)
+				v.Unpriced--
+				s.m[k] = v
+			}
 		}
 		if v, ok := d.KeyUsage[r.KeyID]; ok {
 			v.addCost(cost)
@@ -114,15 +162,6 @@ func (d *diskState) reprice() bool {
 		}
 	}
 	return changed
-}
-
-func (d *diskState) addHourly(at time.Time, provider string, tokens Tokens, cost Cost) {
-	hour := at.UTC().Truncate(time.Hour).Format(time.RFC3339)
-	k := hour + "|" + provider
-	v := d.Hourly[k]
-	v.Day, v.Hour, v.Provider = at.UTC().Format("2006-01-02"), hour, provider
-	v.add(tokens, cost)
-	d.Hourly[k] = v
 }
 
 func (d *diskState) addKeyUsage(keyID string, tokens Tokens, cost Cost) {
@@ -209,28 +248,15 @@ func (a *App) HandleUsage(_ context.Context, r sdkusage.Record) {
 		if len(d.Requests) > 10000 {
 			d.Requests = d.Requests[len(d.Requests)-10000:]
 		}
-		if d.Daily == nil {
-			d.Daily = map[string]DailyUsage{}
-		}
 		if d.TrackingAt == nil {
 			t := at
 			d.TrackingAt = &t
 		}
-		day := at.Format("2006-01-02")
-		k := day + "|" + r.Provider
-		v := d.Daily[k]
-		v.Day = day
-		v.Provider = r.Provider
-		v.add(tokens, cost)
-		d.Daily[k] = v
-		d.addHourly(at, r.Provider, tokens, cost)
-		d.addKeyUsage(keyID, tokens, cost)
-		cutoff := now().AddDate(0, 0, -2).Format(time.RFC3339)
-		for k, v := range d.Hourly {
-			if v.Hour < cutoff {
-				delete(d.Hourly, k)
-			}
+		for _, s := range d.usageSeries() {
+			s.add(entry)
 		}
+		d.addKeyUsage(keyID, tokens, cost)
+		d.pruneHourly()
 		return nil
 	})
 }
