@@ -474,6 +474,10 @@ func (a *App) dashboard(c *gin.Context) {
 		a.keyHubToken(c, parts[1], m == "POST")
 		return
 	}
+	if len(parts) == 3 && parts[0] == "keys" && parts[2] == "usage" && m == "GET" {
+		a.keyUsage(c, parts[1])
+		return
+	}
 	if len(parts) == 2 && parts[0] == "keys" {
 		if m == "PATCH" {
 			a.updateKey(c, parts[1])

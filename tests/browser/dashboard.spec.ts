@@ -255,6 +255,11 @@ test("key access can be edited, archived, and restored with the same credential"
   await page
     .getByRole("button", { name: "Select Editable devices", exact: true })
     .click();
+  // A key opens on its usage; settings are one tab away.
+  await expect(
+    page.getByRole("region", { name: "API usage summary" }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   const dialog = page.getByRole("form", { name: "API key settings" });
   await expect(dialog.getByLabel("Key name", { exact: true })).toHaveValue(
     "Editable devices",
@@ -381,6 +386,7 @@ test("key access can be edited, archived, and restored with the same credential"
   await page
     .getByRole("button", { name: "Select Coding tools", exact: true })
     .click();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await expect(dialog.getByLabel("Selected models")).toContainText(models[1]);
   await expect(subscriptionOnly).toBeChecked();
   await expect(
@@ -440,6 +446,7 @@ test("key access can be edited, archived, and restored with the same credential"
   await expect(page.getByRole("switch", { name: /Coding tools/ })).toHaveCount(
     0,
   );
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await expect(
     dialog.getByRole("checkbox", { name: "All models", exact: true }),
   ).toBeChecked();

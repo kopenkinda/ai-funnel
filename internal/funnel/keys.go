@@ -16,6 +16,26 @@ func (k Key) public() Key {
 	return k
 }
 
+// keyUsage returns one key's day and hour buckets, in the same shape as the
+// Usage page's, so the dashboard can chart them with the same component.
+func (a *App) keyUsage(c *gin.Context, id string) {
+	d := a.store.read()
+	if _, ok := d.Keys[id]; !ok {
+		fail(c, 404, "Key not found.")
+		return
+	}
+	pick := func(m map[string]DailyUsage) map[string]DailyUsage {
+		out := map[string]DailyUsage{}
+		for k, v := range m {
+			if v.KeyID == id {
+				out[k] = v
+			}
+		}
+		return out
+	}
+	c.JSON(200, gin.H{"daily": pick(d.KeyDaily), "hourly": pick(d.KeyHourly)})
+}
+
 // keyHubToken issues or revokes a usage hub key limited to one client key's accounts.
 func (a *App) keyHubToken(c *gin.Context, id string, issue bool) {
 	value := ""
