@@ -129,8 +129,10 @@ type Store struct {
 	refreshes map[string][]byte
 }
 
-// RefreshClaim, RefreshRead and RefreshComplete implement the SDK's Codex
-// refresh journal, so one process never exchanges a refresh token twice.
+// RefreshClaim, RefreshRead, RefreshComplete and RefreshRelease implement the
+// SDK's Codex refresh journal, so one process never exchanges a refresh token
+// twice. The SDK detects the journal by type assertion: a missing method makes
+// it fall back to plaintext files without a compile error.
 func (s *Store) RefreshClaim(_ context.Context, key string) (bool, error) {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
@@ -161,6 +163,18 @@ func (s *Store) RefreshComplete(_ context.Context, key string, receipt []byte) e
 		s.refreshes = map[string][]byte{}
 	}
 	s.refreshes[key] = append([]byte(nil), receipt...)
+	return nil
+}
+
+// RefreshRelease drops a claim whose request never left the process, so the
+// same refresh token can be tried again.
+func (s *Store) RefreshRelease(_ context.Context, key string) error {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if s.refreshes[key] != nil {
+		return fmt.Errorf("refresh receipt already exists")
+	}
+	delete(s.refreshes, key)
 	return nil
 }
 

@@ -8,13 +8,13 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/klauspost/compress v1.17.4
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.63
+	github.com/router-for-me/CLIProxyAPI/v8 v8.0.77
 	golang.org/x/crypto v0.57.0
 )
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
-	github.com/MoeForge/moego v0.1.0-alpha.1 // indirect
+	github.com/MoeForge/moego v0.1.0-alpha.4 // indirect
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect

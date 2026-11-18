@@ -230,11 +230,15 @@ func TestEmbeddedService(t *testing.T) {
 				}
 			}
 		}
-		for _, p := range []string{"/v8/management/credentials", "/v1/models", "/v0/management/config"} {
+		for _, p := range []string{"/v8/management/credentials", "/v1/models", "/v0/management/config", "/v1/tunnel"} {
 			status, _ := request("GET", p, admin, "")
 			if status != 404 {
 				t.Fatalf("raw route %s status %d", p, status)
 			}
+		}
+		// SDK routes outside the blocked prefixes must not reach their handlers.
+		if status, _ := request("POST", "/muse-code/search", admin, `{}`); status != 405 {
+			t.Fatalf("raw SDK route /muse-code/search status %d", status)
 		}
 		status, _ := request("GET", "/api/state", "", "")
 		if status != 401 {
