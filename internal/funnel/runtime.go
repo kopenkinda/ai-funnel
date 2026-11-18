@@ -134,21 +134,21 @@ func (s *selector) Pick(ctx context.Context, provider, model string, opts execut
 }
 
 // grantedCooldown returns the soonest retry when every account a key may use is
-// cooling down. The SDK only sees the whole pool, so while an account outside
+// over its quota. The SDK only sees the whole pool, so while an account outside
 // the key stays healthy it never returns its own cooldown 429 with a reset time.
+// Transient upstream failures also mark accounts unavailable; they are not rate
+// limits, so they keep the generic error.
 func grantedCooldown(auths []*core.Auth, allowed scope, model string, at time.Time) (time.Duration, bool) {
 	var soonest time.Time
 	for _, a := range auths {
 		if a.Provider != allowed.provider || a.Disabled || (allowed.ids != nil && !contains(allowed.ids, a.ID)) {
 			continue
 		}
-		until := a.NextRetryAfter
+		until, limited := a.NextRetryAfter, a.Unavailable && a.Quota.Exceeded
 		if state := a.ModelStates[model]; state != nil && state.Unavailable {
-			until = state.NextRetryAfter
-		} else if !a.Unavailable {
-			return 0, false
+			until, limited = state.NextRetryAfter, state.Quota.Exceeded
 		}
-		if !until.After(at) {
+		if !limited || !until.After(at) {
 			return 0, false
 		}
 		if soonest.IsZero() || until.Before(soonest) {
