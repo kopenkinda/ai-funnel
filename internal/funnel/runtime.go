@@ -43,6 +43,8 @@ type selector struct {
 	// inputs reads current routing settings and quota snapshots, so setting
 	// changes apply to the next selection without replacing the SDK selector.
 	inputs func(provider string, ids []string) (Routing, map[string]Snapshot)
+	// auths lists the whole pool, including accounts the SDK filtered out.
+	auths  func() []*core.Auth
 	now    func() time.Time
 	random func() float64
 	mu     sync.Mutex
@@ -73,6 +75,11 @@ func (s *selector) Pick(ctx context.Context, provider, model string, opts execut
 	for _, a := range auths {
 		if a.Provider == allowed.provider && (allowed.ids == nil || contains(allowed.ids, a.ID)) {
 			candidates = append(candidates, a)
+		}
+	}
+	if len(candidates) == 0 && s.auths != nil {
+		if wait, ok := grantedCooldown(s.auths(), allowed, model, s.clock()); ok {
+			return nil, core.NewModelCooldownError(model, allowed.provider, wait)
 		}
 	}
 	route, snaps := defaultRouting(), map[string]Snapshot{}
@@ -125,6 +132,32 @@ func (s *selector) Pick(ctx context.Context, provider, model string, opts execut
 	}
 	return nil, &core.Error{Code: "subscription_limit_reached", Message: "No allowed Codex account has verified subscription allowance remaining.", HTTPStatus: 429}
 }
+
+// grantedCooldown returns the soonest retry when every account a key may use is
+// cooling down. The SDK only sees the whole pool, so while an account outside
+// the key stays healthy it never returns its own cooldown 429 with a reset time.
+func grantedCooldown(auths []*core.Auth, allowed scope, model string, at time.Time) (time.Duration, bool) {
+	var soonest time.Time
+	for _, a := range auths {
+		if a.Provider != allowed.provider || a.Disabled || (allowed.ids != nil && !contains(allowed.ids, a.ID)) {
+			continue
+		}
+		until := a.NextRetryAfter
+		if state := a.ModelStates[model]; state != nil && state.Unavailable {
+			until = state.NextRetryAfter
+		} else if !a.Unavailable {
+			return 0, false
+		}
+		if !until.After(at) {
+			return 0, false
+		}
+		if soonest.IsZero() || until.Before(soonest) {
+			soonest = until
+		}
+	}
+	return soonest.Sub(at), !soonest.IsZero()
+}
+
 func contains(items []string, v string) bool {
 	for _, item := range items {
 		if item == v {
@@ -176,6 +209,7 @@ func NewRuntime(store *Store, host string, port int, publicURL, dist string, add
 	sdkauth.RegisterTokenStore(store)
 	selection := &selector{inputs: store.routingInputs}
 	manager := core.NewManager(store, selection, nil)
+	selection.auths = manager.List
 	a := &App{usageOwner: token(), store: store, core: manager, management: management, publicURL: strings.TrimRight(publicURL, "/"), dist: dist, failures: map[string][]int64{}, gate: make(chan struct{}, 1)}
 	selection.subscriptionAvailable = a.codexSubscriptionAvailable
 	a.origins = append([]string{a.publicURL}, additionalOrigins...)
